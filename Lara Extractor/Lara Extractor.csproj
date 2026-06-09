@@ -1,0 +1,31 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>WinExe</OutputType>
+        <TargetFramework>net10.0-windows</TargetFramework>
+        <RootNamespace>Lara_Extractor</RootNamespace>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <UseWPF>true</UseWPF>
+        <PlatformTarget>x64</PlatformTarget>
+        <ApplicationIcon>Lara Extractor.ico</ApplicationIcon>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <Content Include="Lara Extractor.ico" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <Reference Include="TombLib">
+        <HintPath>..\..\..\..\..\..\Tomb Editor\TombLib.dll</HintPath>
+      </Reference>
+      <Reference Include="WadTool">
+        <HintPath>..\..\..\..\..\..\Tomb Editor\WadTool.dll</HintPath>
+      </Reference>
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="Blake3" Version="0.6.0" />
+    </ItemGroup>
+
+</Project>
