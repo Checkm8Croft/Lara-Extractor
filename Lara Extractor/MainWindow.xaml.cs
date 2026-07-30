@@ -1,8 +1,9 @@
-﻿using Microsoft.Win32;
+using Microsoft.Win32;
 using System;
 using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Threading;
 
 namespace Lara_Extractor
 {
@@ -38,65 +39,63 @@ namespace Lara_Extractor
                 return;
             }
 
-            string outputDir = Path.Combine(Path.GetDirectoryName(filePath), "Extracted_Assets");
-            string wad2FileName = Path.GetFileNameWithoutExtension(filePath) + ".wad2";
+            string outputDir      = Path.Combine(Path.GetDirectoryName(filePath) ?? "", "Extracted_Assets");
+            string wad2FileName   = Path.GetFileNameWithoutExtension(filePath) + ".wad2";
             string outputWad2Path = Path.Combine(outputDir, "Wads", wad2FileName);
 
-            // Reset UI components
             ExtractionProgress.Value = 0;
             TxtLog.Clear();
             Log("[Engine] Starting comprehensive asset unpacking pipeline...");
 
-            await Task.Run(async () => 
+            await Task.Run(async () =>
             {
                 try
                 {
-                    // ==========================================
-                    // PHASE 1: Raw Asset Extraction
-                    // ==========================================
                     UpdateLog("[Pipeline] Phase 1: Launching AssetProcessor for raw data...");
-
-                    AssetProcessor processor = new AssetProcessor(filePath, UpdateLog, UpdateProgress);
+                    var processor = new AssetProcessor(filePath, UpdateLog, UpdateProgress);
                     processor.UnpackAll();
-
-                    UpdateLog("[Pipeline] AssetProcessor task completed. Releasing file handles...");
-
                     processor = null;
                     GC.Collect();
                     GC.WaitForPendingFinalizers();
-
-                    UpdateLog("[Pipeline] Waiting for OS file handles to clear safely...");
                     await Task.Delay(1500);
-
                     UpdateLog("--------------------------------------------------");
 
-                    // ==========================================
-                    // PHASE 2: 3D Geometry & WAD2 Extraction
-                    // ==========================================
                     UpdateLog("[Pipeline] Phase 2: Launching Wad2Processor for 3D assets...");
-
-                    Wad2Processor wad2Processor = new Wad2Processor(filePath, outputWad2Path, UpdateLog);
+                    var wad2Processor = new Wad2Processor(filePath, outputWad2Path, UpdateLog);
                     wad2Processor.ExtractWad2();
 
-                    UpdateLog("[Pipeline] Comprehensive asset unpacking pipeline finished successfully!");
+                    UpdateLog("[Pipeline] Pipeline finished successfully!");
                     UpdateProgress(100);
                 }
                 catch (Exception ex)
                 {
-                    UpdateLog($"[CRITICAL ERROR] Extraction aborted: {ex.Message}");
+                    UpdateLog($"[CRITICAL ERROR] {ex.GetType().Name}: {ex.Message}");
+                    // Stack trace completa per debug
+                    var lines = (ex.StackTrace ?? "").Split('\n');
+                    foreach (var line in lines)
+                    {
+                        var l = line.Trim();
+                        if (!string.IsNullOrEmpty(l))
+                            UpdateLog($"[STACK] {l}");
+                    }
+                    if (ex.InnerException != null)
+                        UpdateLog($"[INNER] {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
                 }
             });
         }
-        private void Log(string message) => TxtLog.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}\n");
-        
+
+        private void Log(string message)
+            => TxtLog.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}\n");
+
         private void UpdateLog(string message)
         {
-            Dispatcher.Invoke(() => Log(message));
+            Dispatcher.BeginInvoke(DispatcherPriority.Normal, (Action)(() => Log(message)));
         }
 
         private void UpdateProgress(double percentage)
         {
-            Dispatcher.Invoke(() => ExtractionProgress.Value = percentage);
+            Dispatcher.BeginInvoke(DispatcherPriority.Normal,
+                (Action)(() => ExtractionProgress.Value = percentage));
         }
     }
 }

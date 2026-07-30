@@ -1,8 +1,9 @@
 using System;
-using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Threading;
+using System.Windows.Threading;
 using TombLib.Wad;
 using TombLib.Wad.TrLevels;
 
@@ -13,7 +14,9 @@ namespace Lara_Extractor
         private readonly string _inputLevelPath;
         private readonly string _outputWad2Path;
         private readonly Action<string> _logger;
-        private const int TimeoutSeconds = 90;
+
+        private const int TimeoutSeconds = 120;
+        private const int ProgressLogIntervalSeconds = 5;
 
         public Wad2Processor(string inputLevelPath, string outputWad2Path, Action<string> logger)
         {
@@ -24,158 +27,236 @@ namespace Lara_Extractor
 
         public void ExtractWad2()
         {
-            _logger("[Wad2] Starting pipeline...");
+            _logger("[Wad2] ========== AVVIO PIPELINE WAD2 ==========");
 
             if (!File.Exists(_inputLevelPath))
             {
-                _logger("[Wad2 Error] File not found.");
+                _logger("[Wad2 Errore] File non trovato.");
                 return;
             }
 
-            // ── Magic bytes ──────────────────────────────────────────────
-            long fileSize = new FileInfo(_inputLevelPath).Length;
+            var fi = new FileInfo(_inputLevelPath);
             byte[] header = new byte[4];
             using (var fs = File.OpenRead(_inputLevelPath))
                 _ = fs.Read(header, 0, 4);
             uint magic = BitConverter.ToUInt32(header, 0);
 
-            string formatName = magic switch
+            string format = magic switch
             {
-                0x00000020 => "TR1 (.phd)",
-                0x0000002D => "TR2 (.tr2)",
-                0xFF180038 => "TR3 (.tr2)",
-                0xFF080038 => "TR3 (.tr2)",
-                0xFF180034 => "TR3 (.tr2)",
-                0x00345254 => "TR4/TR5 (.tr4/.trc)",
+                0x00000020 => "TR1",
+                0x0000002D => "TR2",
+                0xFF180038 or 0xFF080038 or 0xFF180034 => "TR3",
+                0x00345254 => "TR4/TR5",
                 _ => "UNKNOWN"
             };
 
-            _logger($"[Wad2] File  : {Path.GetFileName(_inputLevelPath)}");
-            _logger($"[Wad2] Size  : {fileSize / 1024:N0} KB");
-            _logger($"[Wad2] Magic : 0x{magic:X8} -> {formatName}");
+            _logger($"[Wad2] File   : {fi.Name}");
+            _logger($"[Wad2] Size   : {fi.Length / 1024:N0} KB");
+            _logger($"[Wad2] Magic  : 0x{magic:X8} -> {format}");
 
-            if (formatName == "UNKNOWN")
+            if (format == "UNKNOWN")
             {
-                _logger("[Wad2 Error] Format not recognized. Aborted.");
+                _logger("[Wad2 Errore] Formato non riconosciuto.");
                 return;
             }
 
-            TrLevel? trLevel = null;
-            Exception? loadException = null;
-
-            var thread = new Thread(() =>
-            {
-                try
-                {
-                    trLevel = new TrLevel();
-                    trLevel.LoadLevel(_inputLevelPath, false);
-                    _logger("[Wad2] LoadLevel completed without exceptions.");
-                }
-                catch (EndOfStreamException ex)
-                {
-                    // Crash attended in bug TombLib 1.11.1 / .NET 10 in SoundDetails.
-                    // Moveables ans Statics are already loaded correctly.
-                    _logger($"[Wad2] EndOfStreamException during LoadLevel (bug on TombLib 1.11.1/.NET 10) — continuing with partial data.");
-                    _logger($"[Wad2] Detail: {ex.Message}");
-                }
-                catch (Exception ex)
-                {
-                    loadException = ex;
-                }
-            });
-            thread.SetApartmentState(ApartmentState.STA);
-            thread.IsBackground = true;
-            thread.Start();
-
-            bool done = thread.Join(TimeSpan.FromSeconds(TimeoutSeconds));
-            if (!done)
-            {
-                thread.Interrupt();
-                _logger($"[Wad2 Error] Timeout: LoadLevel blocked after {TimeoutSeconds}s.");
-                return;
-            }
-
-            if (loadException != null)
-            {
-                _logger($"[Wad2 Error] LoadLevel -> {loadException.GetType().Name}: {loadException.Message}");
-                return;
-            }
-
-            if (trLevel == null)
-            {
-                _logger("[Wad2 Error] TrLevel not initialized.");
-                return;
-            }
-
-            // Manual Conversion to Wad2 format
             Wad2? resultWad = null;
-            Exception? convertException = null;
 
-            var convertThread = new Thread(() =>
+            // ── TR1: usa il parser nativo (TombLib LoadLevel si blocca per TR1) ──
+            if (format == "TR1")
             {
-                try
-                {
-                    var opsType = typeof(TrLevel).Assembly
-                        .GetType("TombLib.Wad.TrLevels.TrLevelOperations");
-
-                    var convertMethod = opsType?.GetMethod("ConvertTrLevel",
-                        BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-
-                    if (convertMethod != null)
-                    {
-                        _logger("[Wad2] Invoking ConvertTrLevel via reflection...");
-                        resultWad = (Wad2?)convertMethod.Invoke(null, new object[] { trLevel });
-                        _logger("[Wad2] ConvertTrLevel completed.");
-                    }
-                    else
-                    {
-                        _logger("[Wad2 Error] ConvertTrLevel not found via reflection.");
-                    }
-                }
-                catch (TargetInvocationException tie) when (tie.InnerException != null)
-                {
-                    convertException = tie.InnerException;
-                }
-                catch (Exception ex)
-                {
-                    convertException = ex;
-                }
-            });
-            convertThread.SetApartmentState(ApartmentState.STA);
-            convertThread.IsBackground = true;
-            convertThread.Start();
-            convertThread.Join(TimeSpan.FromSeconds(TimeoutSeconds));
-
-            if (convertException != null)
+                _logger("[Wad2] TR1: utilizzo parser nativo (bypass TombLib LoadLevel).");
+                var builder = new TR1Wad2Builder(_inputLevelPath, _logger);
+                resultWad = builder.Build();
+            }
+            else
             {
-                _logger($"[Wad2 Error] ConvertTrLevel -> {convertException.GetType().Name}: {convertException.Message}");
-                return;
+                // ── TR4/TR5: usa TombLib LoadLevel + ConvertTrLevel ──────────
+                // ── TR2/TR3: usa TombLib (potrebbero bloccarsi come TR1 — da verificare) ──
+                _logger($"[Wad2] {format}: utilizzo TombLib LoadLevel + ConvertTrLevel.");
+                resultWad = RunViaTombLib();
             }
 
             if (resultWad == null)
             {
-                _logger("[Wad2 Error] ConvertTrLevel returned null.");
+                _logger("[Wad2 Errore] Nessun Wad2 prodotto.");
                 return;
             }
 
             SaveResult(resultWad);
         }
 
+        private Wad2? RunViaTombLib()
+        {
+            _logger("[Wad2] TombLib: avvio thread STA con Dispatcher pump...");
+
+            TrLevel?   trLevel     = null;
+            Wad2?      resultWad   = null;
+            Exception? thrownEx    = null;
+            bool       loadDone    = false;
+            bool       convertDone = false;
+            Dispatcher? staDisp    = null;
+            var dispReady = new ManualResetEventSlim(false);
+
+            var staThread = new Thread(() =>
+            {
+                staDisp = Dispatcher.CurrentDispatcher;
+                dispReady.Set();
+                Dispatcher.Run();
+            });
+            staThread.SetApartmentState(ApartmentState.STA);
+            staThread.IsBackground = true;
+            staThread.Start();
+
+            dispReady.Wait(5000);
+            if (staDisp == null)
+            {
+                _logger("[Wad2 Errore] Dispatcher STA non pronto.");
+                return null;
+            }
+
+            // LoadLevel
+            staDisp.BeginInvoke(DispatcherPriority.Normal, (Action)(() =>
+            {
+                try
+                {
+                    trLevel = new TrLevel();
+                    trLevel.LoadLevel(_inputLevelPath, false);
+                    _logger("[Wad2] [STA] LoadLevel OK.");
+                    loadDone = true;
+                }
+                catch (EndOfStreamException ex)
+                {
+                    _logger($"[Wad2] [STA] EndOfStreamException (bug TR4/TR5 .NET10): {ex.Message}");
+                    loadDone = true;
+                }
+                catch (Exception ex)
+                {
+                    _logger($"[Wad2] [STA] LoadLevel errore: {ex.GetType().Name}: {ex.Message}");
+                    thrownEx = ex;
+                    loadDone = true;
+                }
+            }));
+
+            var sw = Stopwatch.StartNew();
+            while (!loadDone)
+            {
+                Thread.Sleep(ProgressLogIntervalSeconds * 1000);
+                if (!loadDone)
+                {
+                    _logger($"[Wad2] LoadLevel in corso... {sw.Elapsed.TotalSeconds:F0}s");
+                    if (sw.Elapsed.TotalSeconds >= TimeoutSeconds)
+                    {
+                        _logger($"[Wad2 Errore] TIMEOUT LoadLevel dopo {TimeoutSeconds}s.");
+                        staDisp.InvokeShutdown();
+                        return null;
+                    }
+                }
+            }
+
+            if (thrownEx != null && trLevel == null)
+            {
+                _logger("[Wad2 Errore] LoadLevel fallito.");
+                staDisp.InvokeShutdown();
+                return null;
+            }
+
+            LogTrLevelContents(trLevel!);
+
+            // ConvertTrLevel
+            staDisp.BeginInvoke(DispatcherPriority.Normal, (Action)(() =>
+            {
+                try
+                {
+                    var opsType = typeof(TrLevel).Assembly
+                        .GetType("TombLib.Wad.TrLevels.TrLevelOperations");
+                    var method = opsType?.GetMethod("ConvertTrLevel",
+                        BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+
+                    if (method == null)
+                    {
+                        _logger("[Wad2] [STA] ConvertTrLevel non trovato.");
+                        convertDone = true;
+                        return;
+                    }
+
+                    resultWad = (Wad2?)method.Invoke(null, new object[] { trLevel! });
+                    _logger($"[Wad2] [STA] ConvertTrLevel OK. null={resultWad == null}");
+                    convertDone = true;
+                }
+                catch (TargetInvocationException tie)
+                {
+                    var inner = tie.InnerException ?? tie;
+                    _logger($"[Wad2] [STA] ConvertTrLevel errore: {inner.GetType().Name}: {inner.Message}");
+                    thrownEx = inner;
+                    convertDone = true;
+                }
+                catch (Exception ex)
+                {
+                    _logger($"[Wad2] [STA] ConvertTrLevel errore: {ex.GetType().Name}: {ex.Message}");
+                    thrownEx = ex;
+                    convertDone = true;
+                }
+                finally
+                {
+                    staDisp?.InvokeShutdown();
+                }
+            }));
+
+            var swC = Stopwatch.StartNew();
+            while (!convertDone)
+            {
+                Thread.Sleep(ProgressLogIntervalSeconds * 1000);
+                if (!convertDone)
+                {
+                    _logger($"[Wad2] ConvertTrLevel in corso... {swC.Elapsed.TotalSeconds:F0}s");
+                    if (swC.Elapsed.TotalSeconds >= TimeoutSeconds)
+                    {
+                        _logger("[Wad2 Errore] TIMEOUT ConvertTrLevel.");
+                        staDisp.InvokeShutdown();
+                        return null;
+                    }
+                }
+            }
+
+            staThread.Join(5000);
+            return thrownEx == null ? resultWad : null;
+        }
+
+        private void LogTrLevelContents(TrLevel trLevel)
+        {
+            _logger("[Wad2] --- Contenuto TrLevel ---");
+            try
+            {
+                var t = trLevel.GetType();
+                string[] fields = { "Version", "Moveables", "StaticMeshes", "Meshes", "Animations", "Frames", "SpriteSequences" };
+                foreach (var name in fields)
+                {
+                    var f = t.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (f == null) continue;
+                    var val = f.GetValue(trLevel);
+                    if (val is System.Collections.ICollection c) _logger($"[Wad2]   {name} = [{c.Count}]");
+                    else if (val is Array arr) _logger($"[Wad2]   {name} = Array[{arr.Length}]");
+                    else _logger($"[Wad2]   {name} = {val}");
+                }
+            }
+            catch { }
+        }
+
         private void SaveResult(Wad2 wad)
         {
-            _logger($"[Wad2] Result: {wad.Moveables.Count} moveables, " +
-                    $"{wad.Statics.Count} statics, {wad.SpriteSequences.Count} sprites.");
+            _logger("[Wad2] --- Salvataggio ---");
+            _logger($"[Wad2]   Moveables : {wad.Moveables.Count}");
+            _logger($"[Wad2]   Statics   : {wad.Statics.Count}");
+            _logger($"[Wad2]   Sprites   : {wad.SpriteSequences.Count}");
+            _logger($"[Wad2]   Version   : {wad.GameVersion}");
 
-            if (wad.Moveables.Count == 0 && wad.Statics.Count == 0)
-                _logger("[Wad2 Warning] Wad2 is empty (might be a cutscene or title screen).");
+            string? dir = Path.GetDirectoryName(_outputWad2Path);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                Directory.CreateDirectory(dir);
 
-            string? outputDir = Path.GetDirectoryName(_outputWad2Path);
-            if (!string.IsNullOrEmpty(outputDir) && !Directory.Exists(outputDir))
-                Directory.CreateDirectory(outputDir);
-
-            _logger($"[Wad2] Writing: {Path.GetFileName(_outputWad2Path)}");
             Wad2Writer.SaveToFile(wad, _outputWad2Path);
-            _logger($"[Wad2 OK] Saved to: {_outputWad2Path}");
+            _logger("[Wad2] ========== WAD2 SALVATO OK ==========");
         }
     }
 }

@@ -17,10 +17,10 @@
 
     <ItemGroup>
       <Reference Include="TombLib">
-        <HintPath>..\..\..\..\..\..\Tomb Editor\TombLib.dll</HintPath>
+        <HintPath>..\..\..\..\..\..\..\Tomb Editor\TombLib.dll</HintPath>
       </Reference>
       <Reference Include="WadTool">
-        <HintPath>..\..\..\..\..\..\Tomb Editor\WadTool.dll</HintPath>
+        <HintPath>WadTool.dll</HintPath>
       </Reference>
     </ItemGroup>
 
