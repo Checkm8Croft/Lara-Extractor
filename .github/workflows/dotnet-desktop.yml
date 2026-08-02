@@ -65,6 +65,21 @@ jobs:
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
+    # This creates a fake Tomb Editor directry for make TombLib work
+    - name: Make TombLib available from C:\Tomb Editor
+      shell: powershell
+      run: |
+          $dst = 'C:\Tomb Editor'
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+      
+          $src = Join-Path $Env:GITHUB_WORKSPACE 'Lara Extractor\TombLib.dll'
+          if (Test-Path $src) {
+            Copy-Item -Path $src -Destination (Join-Path $dst 'TombLib.dll') -Force
+            Write-Host "Copied TombLib.dll to $dst"
+          } else {
+            Write-Error "TombLib.dll not found at $src"
+            exit 1
+          }
 
     # Install the .NET Core workload
     - name: Install .NET Core
