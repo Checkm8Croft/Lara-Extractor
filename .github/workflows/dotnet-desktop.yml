@@ -1,40 +1,5 @@
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
-
-# This workflow will build, test, sign and package a WPF or Windows Forms desktop application
-# built on .NET Core.
-# To learn how to migrate your existing application to .NET Core,
-# refer to https://docs.microsoft.com/en-us/dotnet/desktop-wpf/migration/convert-project-from-net-framework
-#
-# To configure this workflow:
-#
-# 1. Configure environment variables
-# GitHub sets default environment variables for every workflow run.
-# Replace the variables relative to your project in the "env" section below.
-#
-# 2. Signing
-# Generate a signing certificate in the Windows Application
-# Packaging Project or add an existing signing certificate to the project.
-# Next, use PowerShell to encode the .pfx file using Base64 encoding
-# by running the following Powershell script to generate the output string:
-#
-# $pfx_cert = Get-Content '.\SigningCertificate.pfx' -Encoding Byte
-# [System.Convert]::ToBase64String($pfx_cert) | Out-File 'SigningCertificate_Encoded.txt'
-#
-# Open the output file, SigningCertificate_Encoded.txt, and copy the
-# string inside. Then, add the string to the repo as a GitHub secret
-# and name it "Base64_Encoded_Pfx."
-# For more information on how to configure your signing certificate for
-# this workflow, refer to https://github.com/microsoft/github-actions-for-desktop-apps#signing
-#
-# Finally, add the signing certificate password to the repo as a secret and name it "Pfx_Key".
-# See "Build the Windows Application Packaging project" below to see how the secret is used.
-#
-# For more information on GitHub Actions, refer to https://github.com/features/actions
-# For a complete CI/CD sample to get started with GitHub Action workflows for Desktop Applications,
-# refer to https://github.com/microsoft/github-actions-for-desktop-apps
+# This workflow builds, publishes (win-x64) Debug and Release, zips outputs and uploads both zips
+# to an existing GitHub release with tag "lara", replacing existing assets with the same names.
 
 name: .NET Core Desktop
 
@@ -47,79 +12,105 @@ on:
 jobs:
 
   build:
-
     strategy:
       matrix:
         configuration: [Debug, Release]
 
-    runs-on: windows-latest  # For a list of available runner types, refer to
-                             # https://help.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idruns-on
+    runs-on: windows-latest
 
     env:
-      Solution_Name: "Lara Extractor.slnx"                         # Replace with your solution name, i.e. MyWpfApp.sln.
-      Test_Project_Path: "Lara Extractor\Lara Extractor.csproj"               # Replace with the path to your test project, i.e. MyWpfApp.Tests\MyWpfApp.Tests.csproj.
-
+      Solution_Name: "Lara Extractor.slnx"
+      Test_Project_Path: "Lara Extractor\\Lara Extractor.csproj"
+      Configuration: ${{ matrix.configuration }}
 
     steps:
     - name: Checkout
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
-    # This creates a fake Tomb Editor directry for make TombLib work
+
     - name: Make TombLib available from C:\Tomb Editor
       shell: powershell
       run: |
-          $dst = 'C:\Tomb Editor'
-          New-Item -ItemType Directory -Force -Path $dst | Out-Null
-      
-          $src = Join-Path $Env:GITHUB_WORKSPACE 'Lara Extractor\TombLib.dll'
-          if (Test-Path $src) {
-            Copy-Item -Path $src -Destination (Join-Path $dst 'TombLib.dll') -Force
-            Write-Host "Copied TombLib.dll to $dst"
-          } else {
-            Write-Error "TombLib.dll not found at $src"
-            exit 1
-          }
+        $dst = 'C:\Tomb Editor'
+        New-Item -ItemType Directory -Force -Path $dst | Out-Null
 
-    # Install the .NET Core workload
+        $src = Join-Path $Env:GITHUB_WORKSPACE 'Lara Extractor\TombLib.dll'
+        if (Test-Path $src) {
+          Copy-Item -Path $src -Destination (Join-Path $dst 'TombLib.dll') -Force
+          Write-Host "Copied TombLib.dll to $dst"
+        } else {
+          Write-Error "TombLib.dll not found at $src"
+          exit 1
+        }
+
     - name: Install .NET Core
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: 10.0.x
 
-    # Add  MSBuild to the PATH: https://github.com/microsoft/setup-msbuild
     - name: Setup MSBuild.exe
       uses: microsoft/setup-msbuild@v2
 
-    # Execute all unit tests in the solution
     - name: Execute unit tests
       run: dotnet test
 
-    # Restore the application to populate the obj folder with RuntimeIdentifiers
     - name: Restore the application
       run: msbuild $env:Solution_Name /t:Restore /p:Configuration=$env:Configuration
       env:
         Configuration: ${{ matrix.configuration }}
 
+    # Publish the app to a deterministic folder per-configuration
+    - name: Publish app (${ { matrix.configuration } })
+      shell: powershell
+      run: |
+        $proj = 'Lara Extractor\Lara Extractor.csproj'
+        $out = Join-Path $Env:GITHUB_WORKSPACE \"artifacts\$Env:Configuration\"
+        if (-Not (Test-Path $out)) { New-Item -ItemType Directory -Force -Path $out | Out-Null }
+        Write-Host \"Publishing $proj configuration=$Env:Configuration to $out\"
+        # You can change the RID (win-x64) if you target different platform(s)
+        dotnet publish $proj -c $Env:Configuration -r win-x64 --self-contained false -o $out
 
-    # Create the app package by building and packaging the Windows Application Packaging project
-    - name: Create the app package
-      run: msbuild $env:Wap_Project_Path /p:Configuration=$env:Configuration /p:UapAppxPackageBuildMode=$env:Appx_Package_Build_Mode /p:AppxBundle=$env:Appx_Bundle /p:PackageCertificateKeyFile=GitHubA[...]
-      env:
-        Appx_Bundle: Always
-        Appx_Bundle_Platforms: x86|x64
-        Appx_Package_Build_Mode: StoreUpload
-        Configuration: ${{ matrix.configuration }}
+    - name: Zip published output
+      shell: powershell
+      run: |
+        $outDir = Join-Path $Env:GITHUB_WORKSPACE \"artifacts\$Env:Configuration\"
+        if (-Not (Test-Path $outDir)) {
+          Write-Error \"Publish output not found at $outDir\"
+          exit 1
+        }
+        $zipName = \"LaraExtractor-$Env:Configuration.zip\"
+        $zipPath = Join-Path $Env:GITHUB_WORKSPACE \"artifacts\$zipName\"
+        if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+        Write-Host \"Creating zip $zipPath from $outDir\"
+        Compress-Archive -Path (Join-Path $outDir '*') -DestinationPath $zipPath -Force
 
-    # Publish compiled EXE to an existing release with tag "lara" and replace existing asset
-    - name: Upload compiled EXE to release 'lara'
+    - name: Upload artifact (zip)
+      uses: actions/upload-artifact@v4
+      with:
+        name: LaraExtractor-${{ matrix.configuration }}
+        path: artifacts/LaraExtractor-${{ matrix.configuration }}.zip
+
+  upload-to-release:
+    needs: build
+    runs-on: windows-latest
+    steps:
+    - name: Checkout (needed to set workspace path)
+      uses: actions/checkout@v4
+
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: Upload zips to existing release 'lara' (replace assets)
       if: success()
       shell: powershell
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         $tag = 'lara'
-        $repoFull = $Env:GITHUB_REPOSITORY  # owner/repo
+        $repoFull = $Env:GITHUB_REPOSITORY
 
         Write-Host "Looking up release with tag '$tag' in $repoFull"
         $apiUrl = "https://api.github.com/repos/$repoFull/releases/tags/$tag"
@@ -133,27 +124,25 @@ jobs:
         $releaseId = $release.id
         Write-Host "Found release id: $releaseId"
 
-        # Find the compiled exe inside the repository build outputs. Adjust the search path if needed.
-        $workspace = $Env:GITHUB_WORKSPACE
-        $candidates = Get-ChildItem -Path (Join-Path $workspace 'Lara Extractor') -Recurse -Include '*.exe' -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '\\TestResults\\' }
-        if (-not $candidates -or $candidates.Count -eq 0) {
-          Write-Error "No compiled EXE found under 'Lara Extractor' directory. Adjust the search path to your publish output."
+        $artifactsDir = Join-Path $Env:GITHUB_WORKSPACE 'artifacts'
+        $zips = Get-ChildItem -Path $artifactsDir -Filter '*.zip' -File -ErrorAction SilentlyContinue
+        if (-not $zips -or $zips.Count -eq 0) {
+          Write-Error "No zip artifacts found in $artifactsDir"
           exit 1
         }
-        # Pick the most recently modified exe
-        $exe = $candidates | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-        Write-Host "Will upload asset: $($exe.FullName)"
 
-        # If an asset with same name exists, delete it so we replace it
-        $existing = $release.assets | Where-Object { $_.name -eq $exe.Name }
-        if ($existing) {
-          Write-Host "Existing asset found (id=$($existing.id)). Deleting before upload..."
-          $deleteUrl = "https://api.github.com/repos/$repoFull/releases/assets/$($existing.id)"
-          Invoke-RestMethod -Method Delete -Uri $deleteUrl -Headers @{ Authorization = "token $env:GITHUB_TOKEN"; "User-Agent" = "github-actions" }
+        foreach ($zip in $zips) {
+          Write-Host "Preparing to upload $($zip.Name)"
+          # If an asset with same name exists, delete it so we replace it
+          $existing = $release.assets | Where-Object { $_.name -eq $zip.Name }
+          if ($existing) {
+            Write-Host "Existing asset found (id=$($existing.id)). Deleting before upload..."
+            $deleteUrl = "https://api.github.com/repos/$repoFull/releases/assets/$($existing.id)"
+            Invoke-RestMethod -Method Delete -Uri $deleteUrl -Headers @{ Authorization = "token $env:GITHUB_TOKEN"; "User-Agent" = "github-actions" }
+          }
+
+          $uploadUrl = "https://uploads.github.com/repos/$repoFull/releases/$releaseId/assets?name=$($zip.Name)"
+          Write-Host "Uploading $($zip.FullName) to $uploadUrl"
+          Invoke-RestMethod -Method Post -Uri $uploadUrl -Headers @{ Authorization = "token $env:GITHUB_TOKEN"; "User-Agent" = "github-actions"; "Content-Type" = "application/zip" } -InFile $zip.FullName -UseBasicParsing
+          Write-Host "$($zip.Name) uploaded."
         }
-
-        # Upload the asset
-        $uploadUrl = "https://uploads.github.com/repos/$repoFull/releases/$releaseId/assets?name=$($exe.Name)"
-        Write-Host "Uploading to: $uploadUrl"
-        Invoke-RestMethod -Method Post -Uri $uploadUrl -Headers @{ Authorization = "token $env:GITHUB_TOKEN"; "User-Agent" = "github-actions"; "Content-Type" = "application/octet-stream" } -InFile $exe.FullName -UseBasicParsing
-        Write-Host "Upload completed."
