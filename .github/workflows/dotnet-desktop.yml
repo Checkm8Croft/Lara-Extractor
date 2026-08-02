@@ -71,19 +71,28 @@ jobs:
         # You can change the RID (win-x64) if you target different platform(s)
         dotnet publish $proj -c $Env:Configuration -r win-x64 --self-contained false -o $out
 
-    - name: Zip published output
-      shell: powershell
-      run: |
-        $outDir = Join-Path $Env:GITHUB_WORKSPACE \"artifacts\$Env:Configuration\"
-        if (-Not (Test-Path $outDir)) {
-          Write-Error \"Publish output not found at $outDir\"
-          exit 1
-        }
-        $zipName = \"LaraExtractor-$Env:Configuration.zip\"
-        $zipPath = Join-Path $Env:GITHUB_WORKSPACE \"artifacts\$zipName\"
-        if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-        Write-Host \"Creating zip $zipPath from $outDir\"
-        Compress-Archive -Path (Join-Path $outDir '*') -DestinationPath $zipPath -Force
+        - name: Zip published output
+          shell: powershell
+          run: |
+            # build a deterministic published output folder path
+            $artifactsRoot = Join-Path $Env:GITHUB_WORKSPACE 'artifacts'
+            $outDir = Join-Path $artifactsRoot $Env:Configuration
+    
+            if (-Not (Test-Path $outDir)) {
+              Write-Error "Publish output not found at $outDir"
+              exit 1
+            }
+    
+            # create zip name and path safely (avoid direct "$Env:..." interpolation inside quotes)
+            $zipName = 'LaraExtractor-' + $Env:Configuration + '.zip'
+            $zipPath = Join-Path $artifactsRoot $zipName
+    
+            if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+    
+            Write-Host "Creating zip $zipPath from $outDir"
+    
+            # Compress the published files (preserve folder contents)
+            Get-ChildItem -Path $outDir -Recurse | Compress-Archive -DestinationPath $zipPath -Force
 
     - name: Upload artifact (zip)
       uses: actions/upload-artifact@v4
