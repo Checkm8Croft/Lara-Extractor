@@ -119,7 +119,7 @@ jobs:
       run: |
         $tag = 'lara'
         $repoFull = $Env:GITHUB_REPOSITORY
-
+        
         Write-Host "Looking up release with tag '$tag' in $repoFull"
         $apiUrl = "https://api.github.com/repos/$repoFull/releases/tags/$tag"
         try {
@@ -128,19 +128,29 @@ jobs:
           Write-Error "Release with tag '$tag' not found or API access failed: $_"
           exit 1
         }
-
+        
         $releaseId = $release.id
         Write-Host "Found release id: $releaseId"
-
+        
         $artifactsDir = Join-Path $Env:GITHUB_WORKSPACE 'artifacts'
-        $zips = Get-ChildItem -Path $artifactsDir -Filter '*.zip' -File -ErrorAction SilentlyContinue
+        
+        # Diagnostic: list what's in artifacts (helps debuggare se ancora non trovi i file)
+        if (Test-Path $artifactsDir) {
+          Write-Host "Contents of $artifactsDir:"
+          Get-ChildItem -Path $artifactsDir -Recurse | ForEach-Object { Write-Host $_.FullName }
+        } else {
+          Write-Host "Artifacts directory does not exist: $artifactsDir"
+        }
+        
+        # Find zip files recursively (download-artifact typically creates subfolders per-artifact)
+        $zips = Get-ChildItem -Path $artifactsDir -Filter '*.zip' -File -Recurse -ErrorAction SilentlyContinue
         if (-not $zips -or $zips.Count -eq 0) {
-          Write-Error "No zip artifacts found in $artifactsDir"
+          Write-Error "No zip artifacts found in $artifactsDir (searched recursively)."
           exit 1
         }
-
+        
         foreach ($zip in $zips) {
-          Write-Host "Preparing to upload $($zip.Name)"
+          Write-Host "Preparing to upload $($zip.Name) (full path: $($zip.FullName))"
           # If an asset with same name exists, delete it so we replace it
           $existing = $release.assets | Where-Object { $_.name -eq $zip.Name }
           if ($existing) {
@@ -148,7 +158,7 @@ jobs:
             $deleteUrl = "https://api.github.com/repos/$repoFull/releases/assets/$($existing.id)"
             Invoke-RestMethod -Method Delete -Uri $deleteUrl -Headers @{ Authorization = "token $env:GITHUB_TOKEN"; "User-Agent" = "github-actions" }
           }
-
+        
           $uploadUrl = "https://uploads.github.com/repos/$repoFull/releases/$releaseId/assets?name=$($zip.Name)"
           Write-Host "Uploading $($zip.FullName) to $uploadUrl"
           Invoke-RestMethod -Method Post -Uri $uploadUrl -Headers @{ Authorization = "token $env:GITHUB_TOKEN"; "User-Agent" = "github-actions"; "Content-Type" = "application/zip" } -InFile $zip.FullName -UseBasicParsing
