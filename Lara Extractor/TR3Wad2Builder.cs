@@ -9,8 +9,8 @@ using TombLib.Wad;
 
 namespace Lara_Extractor
 {
-
-    public class TR1Wad2Builder
+    
+    public class TR3Wad2Builder
     {
         private readonly string _filePath;
         private readonly Action<string> _logger;
@@ -23,21 +23,20 @@ namespace Lara_Extractor
         private int[]    _animFrameSizes   = Array.Empty<int>();  
         private int[]    _meshTrees       = Array.Empty<int>();
         private ushort[] _frames          = Array.Empty<ushort>();
-        private TR1Model[]          _models          = Array.Empty<TR1Model>();
-        private TR1StaticMesh[]     _statics         = Array.Empty<TR1StaticMesh>();
-        private TR1ObjectTexture[]  _objectTextures  = Array.Empty<TR1ObjectTexture>();
-        private TR1SpriteTexture[]  _spriteTextures  = Array.Empty<TR1SpriteTexture>();
-        private TR1SpriteSequence[] _spriteSequences = Array.Empty<TR1SpriteSequence>();
-        
+        private TR3Model[]          _models          = Array.Empty<TR3Model>();
+        private TR3StaticMesh[]     _statics         = Array.Empty<TR3StaticMesh>();
+        private TR3ObjectTexture[]  _objectTextures  = Array.Empty<TR3ObjectTexture>();
+        private TR3SpriteTexture[]  _spriteTextures  = Array.Empty<TR3SpriteTexture>();
+        private TR3SpriteSequence[] _spriteSequences = Array.Empty<TR3SpriteSequence>();
         private byte[]? _palette8 = null;
 
-        
+        private bool _isTr2 = false;
+
         private WadTexture[] _tileTextures = Array.Empty<WadTexture>();
-        
         private readonly Dictionary<int, WadTexture> _objTexCache = new();
 
         
-        private struct TR1Model
+        private struct TR3Model
         {
             public uint   ID;
             public ushort NumMeshes;
@@ -47,7 +46,7 @@ namespace Lara_Extractor
             public ushort Animation;
         }
 
-        private struct TR1StaticMesh
+        private struct TR3StaticMesh
         {
             public uint   ID;
             public ushort Mesh;
@@ -56,14 +55,14 @@ namespace Lara_Extractor
             public ushort Flags;
         }
 
-        private struct TR1ObjectTexture
+        private struct TR3ObjectTexture
         {
             public ushort Attribute; // 0=opaque, 1=alpha, 2=additive
             public ushort Tile;
             public Vector2[] UV; // [4] in pixel coordinates (0..255)
         }
 
-        private struct TR1SpriteTexture
+        private struct TR3SpriteTexture
         {
             public ushort Tile;
             public byte   X, Y;
@@ -71,44 +70,49 @@ namespace Lara_Extractor
             public short  LeftSide, TopSide, RightSide, BottomSide;
         }
 
-        private struct TR1SpriteSequence
+        private struct TR3SpriteSequence
         {
             public int   SpriteID;
             public short NegativeLength;
             public short Offset;
         }
 
-        
-        public TR1Wad2Builder(string filePath, Action<string> logger)
+        public TR3Wad2Builder(string filePath, Action<string> logger)
         {
             _filePath = filePath;
             _logger   = logger;
         }
 
+        // ── Entry point ──────────────────────────────────────────────────
+
         public Wad2? Build()
         {
-            _logger("[TR1Parser] Starting parsing native TR1...");
+            _logger("[TR3Parser] Starting parsing of native TR3...");
             try
             {
                 using var fs = File.OpenRead(_filePath);
                 using var br = new BinaryReader(fs);
 
                 uint version = br.ReadUInt32();
-                _logger($"[TR1Parser] Version: 0x{version:X8}");
+                _logger($"[TR3Parser] Version: 0x{version:X8}");
+
+                _isTr2 = (version & 0xFFFF0000) != 0xFF180000 && (version & 0xFFFF0000) != 0xFF080000;
+                _logger(_isTr2 ? "[TR3Parser] Detected layout TR2" : "[TR3Parser] Detected layout TR3");
+                byte[] rawPal = br.ReadBytes(768);
+                var palette8 = new byte[768];
+                for (int i = 0; i < 768; i++) palette8[i] = (byte)(rawPal[i] * 4); // VGA 6-bit -> 8-bit
+                _palette8 = palette8;
+                _logger($"[TR3Parser] Palette8 read (max val: {MaxVal(palette8)})");
+
+                br.BaseStream.Seek(1024, SeekOrigin.Current); // Palette16 (not used)
 
                 uint numTiles = br.ReadUInt32();
                 long tilesStart = br.BaseStream.Position;
-                br.BaseStream.Seek(numTiles * 65536, SeekOrigin.Current);
-                _logger($"[TR1Parser] Textile8: {numTiles} tiles");
+                _logger($"[TR3Parser] Textile8: {numTiles} tiles");
 
-                
-                byte[] palette8 = ReadPalette8(br, tilesStart, (int)numTiles);
-                _palette8 = palette8; // MakeSolidColorArea
-                _logger($"[TR1Parser] Palette8 caricata (max val: {MaxVal(palette8)})");
                 _tileTextures = BuildTileTextures(br, tilesStart, (int)numTiles, palette8);
-                _logger($"[TR1Parser] {_tileTextures.Length} WadTexture tile costruite");
-
-                br.BaseStream.Position = tilesStart + numTiles * 65536;
+                _logger($"[TR3Parser] {_tileTextures.Length} WadTexture tile built");
+                br.BaseStream.Position = tilesStart + numTiles * 65536L + numTiles * 131072L;
                 br.ReadUInt32(); // Unused
 
                 SkipRooms(br);
@@ -118,12 +122,12 @@ namespace Lara_Extractor
 
                 uint nMeshWords = br.ReadUInt32();
                 _meshData = br.ReadBytes((int)nMeshWords * 2);
-                _logger($"[TR1Parser] MeshData: {nMeshWords} words");
+                _logger($"[TR3Parser] MeshData: {nMeshWords} words");
 
                 uint nPtrs = br.ReadUInt32();
                 _meshPtrs = new uint[nPtrs];
                 for (int i = 0; i < nPtrs; i++) _meshPtrs[i] = br.ReadUInt32();
-                _logger($"[TR1Parser] MeshPointers: {nPtrs}");
+                _logger($"[TR3Parser] MeshPointers: {nPtrs}");
 
                 uint nAnims = br.ReadUInt32();
                 _animData = br.ReadBytes((int)nAnims * 32);
@@ -151,7 +155,7 @@ namespace Lara_Extractor
                             _animFrameSizes[i] = (int)(delta / (uint)(nf * 2));
                     }
                 }
-                _logger($"[TR1Parser] Animations: {nAnims}");
+                _logger($"[TR3Parser] Animations: {nAnims}");
 
                 uint nSC = br.ReadUInt32(); br.BaseStream.Seek(nSC * 6, SeekOrigin.Current);
                 uint nAD = br.ReadUInt32(); br.BaseStream.Seek(nAD * 8, SeekOrigin.Current);
@@ -160,17 +164,17 @@ namespace Lara_Extractor
                 uint nMT = br.ReadUInt32();
                 _meshTrees = new int[nMT];
                 for (int i = 0; i < nMT; i++) _meshTrees[i] = br.ReadInt32();
-                _logger($"[TR1Parser] MeshTrees: {nMT}");
+                _logger($"[TR3Parser] MeshTrees: {nMT}");
 
                 uint nFrames = br.ReadUInt32();
                 _frames = new ushort[nFrames];
                 for (int i = 0; i < nFrames; i++) _frames[i] = br.ReadUInt16();
-                _logger($"[TR1Parser] Frames: {nFrames} words");
+                _logger($"[TR3Parser] Frames: {nFrames} words");
 
                 uint nModels = br.ReadUInt32();
-                _models = new TR1Model[nModels];
+                _models = new TR3Model[nModels];
                 for (int i = 0; i < nModels; i++)
-                    _models[i] = new TR1Model
+                    _models[i] = new TR3Model
                     {
                         ID           = br.ReadUInt32(),
                         NumMeshes    = br.ReadUInt16(),
@@ -179,12 +183,12 @@ namespace Lara_Extractor
                         FrameOffset  = br.ReadUInt32(),
                         Animation    = br.ReadUInt16()
                     };
-                _logger($"[TR1Parser] Models: {nModels}");
+                _logger($"[TR3Parser] Models: {nModels}");
 
                 uint nStatics = br.ReadUInt32();
-                _statics = new TR1StaticMesh[nStatics];
+                _statics = new TR3StaticMesh[nStatics];
                 for (int i = 0; i < nStatics; i++)
-                    _statics[i] = new TR1StaticMesh
+                    _statics[i] = new TR3StaticMesh
                     {
                         ID      = br.ReadUInt32(), Mesh = br.ReadUInt16(),
                         VisMinX = br.ReadInt16(), VisMaxX = br.ReadInt16(),
@@ -195,30 +199,35 @@ namespace Lara_Extractor
                         ColMinZ = br.ReadInt16(), ColMaxZ = br.ReadInt16(),
                         Flags   = br.ReadUInt16()
                     };
-                _logger($"[TR1Parser] StaticMeshes: {nStatics}");
+                _logger($"[TR3Parser] StaticMeshes: {nStatics}");
 
-                uint nOT = br.ReadUInt32();
-                _objectTextures = new TR1ObjectTexture[nOT];
-                for (int i = 0; i < nOT; i++)
+                
+                if (_isTr2)
                 {
-                    ushort attr = br.ReadUInt16();
-                    ushort tile = br.ReadUInt16();
-                    var uv = new Vector2[4];
-                    for (int v = 0; v < 4; v++)
+                    uint nOTt2 = br.ReadUInt32();
+                    _objectTextures = new TR3ObjectTexture[nOTt2];
+                    for (int i = 0; i < nOTt2; i++)
                     {
-                        ushort xc = br.ReadUInt16();
-                        ushort yc = br.ReadUInt16();
-                        float u = (xc >> 8) + (xc & 0xFF) / 256.0f;
-                        float v2 = (yc >> 8) + (yc & 0xFF) / 256.0f;
-                        uv[v] = new Vector2(u, v2);
+                        ushort attr = br.ReadUInt16();
+                        ushort tile = br.ReadUInt16();
+                        var uv = new Vector2[4];
+                        for (int v = 0; v < 4; v++)
+                        {
+                            ushort xc = br.ReadUInt16();
+                            ushort yc = br.ReadUInt16();
+                            float u = (xc >> 8) + (xc & 0xFF) / 256.0f;
+                            float v2 = (yc >> 8) + (yc & 0xFF) / 256.0f;
+                            uv[v] = new Vector2(u, v2);
+                        }
+                        _objectTextures[i] = new TR3ObjectTexture { Attribute = attr, Tile = tile, UV = uv };
                     }
-                    _objectTextures[i] = new TR1ObjectTexture { Attribute = attr, Tile = tile, UV = uv };
+                    _logger($"[TR3Parser] ObjectTextures: {nOTt2}");
                 }
-                _logger($"[TR1Parser] ObjectTextures: {nOT}");
+
                 uint nST = br.ReadUInt32();
-                _spriteTextures = new TR1SpriteTexture[nST];
+                _spriteTextures = new TR3SpriteTexture[nST];
                 for (int i = 0; i < nST; i++)
-                    _spriteTextures[i] = new TR1SpriteTexture
+                    _spriteTextures[i] = new TR3SpriteTexture
                     {
                         Tile      = br.ReadUInt16(),
                         X         = br.ReadByte(), Y = br.ReadByte(),
@@ -226,69 +235,58 @@ namespace Lara_Extractor
                         LeftSide  = br.ReadInt16(), TopSide    = br.ReadInt16(),
                         RightSide = br.ReadInt16(), BottomSide = br.ReadInt16()
                     };
-                _logger($"[TR1Parser] SpriteTextures: {nST}");
+                _logger($"[TR3Parser] SpriteTextures: {nST}");
 
                 uint nSS = br.ReadUInt32();
-                _spriteSequences = new TR1SpriteSequence[nSS];
+                _spriteSequences = new TR3SpriteSequence[nSS];
                 for (int i = 0; i < nSS; i++)
-                    _spriteSequences[i] = new TR1SpriteSequence
+                    _spriteSequences[i] = new TR3SpriteSequence
                     {
                         SpriteID       = br.ReadInt32(),
                         NegativeLength = br.ReadInt16(),
                         Offset         = br.ReadInt16()
                     };
-                _logger($"[TR1Parser] SpriteSequences: {nSS}");
+                _logger($"[TR3Parser] SpriteSequences: {nSS}");
 
-                _logger("[TR1Parser] Parsing completed — building Wad2...");
+                if (!_isTr2)
+                {
+                    uint nCam = br.ReadUInt32(); br.BaseStream.Seek(nCam * 16, SeekOrigin.Current);
+                    uint nSndSrc = br.ReadUInt32(); br.BaseStream.Seek(nSndSrc * 16, SeekOrigin.Current);
+                    uint nBoxes = br.ReadUInt32(); br.BaseStream.Seek(nBoxes * 8, SeekOrigin.Current);
+                    uint nOverlaps = br.ReadUInt32(); br.BaseStream.Seek(nOverlaps * 2, SeekOrigin.Current);
+                    br.BaseStream.Seek(nBoxes * 10 * 2, SeekOrigin.Current);
+                    uint nAnimTex = br.ReadUInt32(); br.BaseStream.Seek(nAnimTex * 2, SeekOrigin.Current);
+                    _logger($"[TR3Parser] Boxes:{nBoxes} Overlaps:{nOverlaps} AnimatedTextures:{nAnimTex}");
+
+                    uint nOT = br.ReadUInt32();
+                    _objectTextures = new TR3ObjectTexture[nOT];
+                    for (int i = 0; i < nOT; i++)
+                    {
+                        ushort attr = br.ReadUInt16();
+                        ushort tile = br.ReadUInt16();
+                        var uv = new Vector2[4];
+                        for (int v = 0; v < 4; v++)
+                        {
+                            ushort xc = br.ReadUInt16();
+                            ushort yc = br.ReadUInt16();
+                            float u = (xc >> 8) + (xc & 0xFF) / 256.0f;
+                            float v2 = (yc >> 8) + (yc & 0xFF) / 256.0f;
+                            uv[v] = new Vector2(u, v2);
+                        }
+                        _objectTextures[i] = new TR3ObjectTexture { Attribute = attr, Tile = tile, UV = uv };
+                    }
+                    _logger($"[TR3Parser] ObjectTextures: {nOT}");
+                }
+
+                _logger("[TR3Parser] Parsing completed — building Wad2...");
                 return BuildWad2();
             }
             catch (Exception ex)
             {
-                _logger($"[TR1Parser Error] {ex.GetType().Name}: {ex.Message}");
-                _logger($"[TR1Parser] {ex.StackTrace?.Split('\n')[0].Trim()}");
+                _logger($"[TR3Parser Error] {ex.GetType().Name}: {ex.Message}");
+                _logger($"[TR3Parser] {ex.StackTrace?.Split('\n')[0].Trim()}");
                 return null;
             }
-        }
-
-
-        private byte[] ReadPalette8(BinaryReader br, long tilesStart, int numTiles)
-        {
-            long savedPos = br.BaseStream.Position;
-            long fileLen  = br.BaseStream.Length;
-
-            br.BaseStream.Position = 0;
-            byte[] file = br.ReadBytes((int)fileLen);
-            br.BaseStream.Position = savedPos;
-            int firstRiff = -1;
-            for (int i = 4; i < file.Length - 4; i++)
-            {
-                if (file[i]=='R' && file[i+1]=='I' && file[i+2]=='F' && file[i+3]=='F')
-                { firstRiff = i; break; }
-            }
-
-            if (firstRiff < 768) return BuildGrayscalePalette();
-
-            for (int i = firstRiff - 768; i >= Math.Max(0, firstRiff - 9000); i--)
-            {
-                bool valid = true;
-                for (int j = 0; j < 768; j++)
-                    if (file[i + j] > 63) { valid = false; break; }
-                if (valid)
-                {
-                    var pal = new byte[768];
-                    Buffer.BlockCopy(file, i, pal, 0, 768);
-                    for (int k = 0; k < 768; k++) pal[k] = (byte)(pal[k] * 4);
-                    return pal;
-                }
-            }
-            return BuildGrayscalePalette();
-        }
-
-        private static byte[] BuildGrayscalePalette()
-        {
-            var p = new byte[768];
-            for (int i = 0; i < 256; i++) p[i*3] = p[i*3+1] = p[i*3+2] = (byte)i;
-            return p;
         }
 
         private static byte MaxVal(byte[] arr) { byte m=0; foreach(var b in arr) if(b>m)m=b; return m; }
@@ -352,7 +350,7 @@ namespace Lara_Extractor
         private void SkipRooms(BinaryReader br)
         {
             ushort n = br.ReadUInt16();
-            _logger($"[TR1Parser] Rooms: {n} — skipping...");
+            _logger($"[TR3Parser] Rooms: {n} — skipping...");
             for (int r = 0; r < n; r++)
             {
                 br.ReadBytes(16);                                                   // RoomInfo
@@ -361,18 +359,21 @@ namespace Lara_Extractor
                 ushort nZ = br.ReadUInt16(), nX = br.ReadUInt16();
                 br.BaseStream.Seek(nZ * nX * 8, SeekOrigin.Current);                // Sectors
                 br.ReadInt16();                                                      // AmbientIntensity
-                ushort nL = br.ReadUInt16(); br.BaseStream.Seek(nL * 18, SeekOrigin.Current); // Lights
-                ushort nM = br.ReadUInt16(); br.BaseStream.Seek(nM * 18, SeekOrigin.Current); // Meshes
+                if (_isTr2) br.ReadInt16();                                          // AmbientIntensity2 (SOLO TR2)
+                br.ReadInt16();                                                      // LightMode
+                ushort nL = br.ReadUInt16(); br.BaseStream.Seek(nL * 24, SeekOrigin.Current); // Lights (tr2/tr3_room_light = 24 bytes)
+                ushort nM = br.ReadUInt16(); br.BaseStream.Seek(nM * 20, SeekOrigin.Current); // Meshes (tr2/tr3_room_staticmesh = 20 bytes)
                 br.ReadInt16(); br.ReadInt16();                                      // AlternateRoom, Flags
+                if (!_isTr2) { br.ReadByte(); br.ReadByte(); br.ReadByte(); }        // WaterScheme, ReverbInfo, Filler (SOLO TR3+)
             }
-            _logger($"[TR1Parser] Rooms skipped. Pos: {br.BaseStream.Position:N0}");
+            _logger($"[TR3Parser] Rooms skipped. Pos: {br.BaseStream.Position:N0}");
         }
 
         
         private Wad2 BuildWad2()
         {
             var wad = new Wad2();
-            wad.GameVersion = TRVersion.Game.TR1;
+            wad.GameVersion = _isTr2 ? TRVersion.Game.TR2 : TRVersion.Game.TR3;
 
             int ok = 0, fail = 0;
             for (int modelIdx = 0; modelIdx < _models.Length; modelIdx++)
@@ -382,41 +383,40 @@ namespace Lara_Extractor
                 catch (Exception ex)
                 {
                     fail++;
-                    _logger($"[TR1Parser] Moveable {model.ID}: {ex.GetType().Name}: {ex.Message}");
+                    _logger($"[TR3Parser] Moveable {model.ID}: {ex.GetType().Name}: {ex.Message}");
                     var st = ex.StackTrace;
                     if (st != null)
                         foreach (var line in st.Split('\n'))
-                            if (line.Contains("TR1Wad2Builder"))
-                                _logger($"[TR1Parser]   {line.Trim()}");
+                            if (line.Contains("TR3Wad2Builder"))
+                                _logger($"[TR3Parser]   {line.Trim()}");
                 }
             }
-            _logger($"[TR1Parser] Moveables: {ok} OK, {fail} fail");
+            _logger($"[TR3Parser] Moveables: {ok} OK, {fail} fail");
 
             ok = 0; fail = 0;
             foreach (var s in _statics)
             {
                 try { wad.Statics[new WadStaticId(s.ID)] = BuildStatic(s); ok++; }
-                catch (Exception ex) { fail++; _logger($"[TR1Parser] Static {s.ID}: {ex.Message}"); }
+                catch (Exception ex) { fail++; _logger($"[TR3Parser] Static {s.ID}: {ex.Message}"); }
             }
-            _logger($"[TR1Parser] Statics: {ok} OK, {fail} fail");
+            _logger($"[TR3Parser] Statics: {ok} OK, {fail} fail");
 
             ok = 0; fail = 0;
             foreach (var seq in _spriteSequences)
             {
                 try { wad.SpriteSequences[new WadSpriteSequenceId((uint)seq.SpriteID)] = BuildSpriteSequence(seq); ok++; }
-                catch (Exception ex) { fail++; _logger($"[TR1Parser] Sprite {seq.SpriteID}: {ex.Message}"); }
+                catch (Exception ex) { fail++; _logger($"[TR3Parser] Sprite {seq.SpriteID}: {ex.Message}"); }
             }
-            _logger($"[TR1Parser] Sprites: {ok} OK, {fail} fail");
+            _logger($"[TR3Parser] Sprites: {ok} OK, {fail} fail");
 
-            _logger($"[TR1Parser] Wad2: {wad.Moveables.Count} moveables, {wad.Statics.Count} statics, {wad.SpriteSequences.Count} sprites.");
+            _logger($"[TR3Parser] Wad2: {wad.Moveables.Count} moveables, {wad.Statics.Count} statics, {wad.SpriteSequences.Count} sprites.");
             return wad;
         }
 
-        private WadMoveable BuildMoveable(TR1Model model, int modelIndex)
+        private WadMoveable BuildMoveable(TR3Model model, int modelIndex)
         {
             var mov = new WadMoveable(new WadMoveableId(model.ID));
 
-            
             for (int m = 0; m < model.NumMeshes; m++)
             {
                 int meshIdx = model.StartingMesh + m;
@@ -454,7 +454,7 @@ namespace Lara_Extractor
                 mov.Bones.Add(bone);
             }
 
-             if (model.Animation != 0xFFFF)
+            if (model.Animation != 0xFFFF)
             {
                 int firstAnim = model.Animation;
                 int animCount = 1;
@@ -481,19 +481,26 @@ namespace Lara_Extractor
                 for (int a = 0; a < animCount; a++)
                     mov.Animations.Add(ParseAnimation(firstAnim + a, model.NumMeshes));
 
-                _logger($"[TR1Parser]   Moveable {model.ID}: {animCount} animations (from {firstAnim})");
+                _logger($"[TR3Parser]   Moveable {model.ID}: {animCount} animations (from {firstAnim})");
             }
             else
             {
                 var idle = new WadAnimation { Name = "anim_idle" };
-                idle.KeyFrames.Add(new WadKeyFrame());
+                var kf = new WadKeyFrame();
+                for (int b = 0; b < mov.Bones.Count; b++)
+                {
+                    int dummy = 0;
+                    var zero = new List<short> { 0, 0 };
+                    kf.Angles.Add(WadKeyFrameRotation.FromTrAngle(ref dummy, zero, false, false));
+                }
+                idle.KeyFrames.Add(kf);
                 mov.Animations.Add(idle);
             }
 
             return mov;
         }
 
-        private WadStatic BuildStatic(TR1StaticMesh s)
+        private WadStatic BuildStatic(TR3StaticMesh s)
         {
             var stat = new WadStatic(new WadStaticId(s.ID));
             stat.Mesh = s.Mesh < _meshPtrs.Length
@@ -508,7 +515,7 @@ namespace Lara_Extractor
             return stat;
         }
 
-        private WadSpriteSequence BuildSpriteSequence(TR1SpriteSequence seq)
+        private WadSpriteSequence BuildSpriteSequence(TR3SpriteSequence seq)
         {
             var sprSeq = new WadSpriteSequence(new WadSpriteSequenceId((uint)seq.SpriteID));
             int count = Math.Abs(seq.NegativeLength);
@@ -520,8 +527,6 @@ namespace Lara_Extractor
 
                 int tileIdx = st.Tile < _tileTextures.Length ? st.Tile : 0;
                 if (_tileTextures.Length == 0) continue;
-
-              
                 int actualW = (st.Width  / 256) + 1;
                 int actualH = (st.Height / 256) + 1;
                 actualW = Math.Max(1, Math.Min(actualW, 256 - st.X));
@@ -547,7 +552,7 @@ namespace Lara_Extractor
             return sprSeq;
         }
 
-
+        
         private WadMesh ParseMesh(int byteOffset)
         {
             var mesh = new WadMesh { Name = "mesh" };
@@ -577,14 +582,13 @@ namespace Lara_Extractor
             for (int i = 0; i < nTQ; i++)
             {
                 int v0=br.ReadUInt16(), v1=br.ReadUInt16(), v2=br.ReadUInt16(), v3=br.ReadUInt16();
-                int ti = br.ReadUInt16() & 0x7FFF; // double-sided flag
+                int ti = br.ReadUInt16() & 0x7FFF; 
                 var (_, area) = ti < _objectTextures.Length
                     ? GetObjectTexture(ti, false)
                     : MakeFallbackArea();
                 mesh.Polys.Add(new WadPolygon { Shape=WadPolygonShape.Quad,
                     Index0=v0, Index1=v1, Index2=v2, Index3=v3, Texture=area });
             }
-
             short nTT = br.ReadInt16();
             for (int i = 0; i < nTT; i++)
             {
@@ -597,7 +601,6 @@ namespace Lara_Extractor
                     Index0=v0, Index1=v1, Index2=v2, Texture=area });
             }
 
-       
             short nCQ = br.ReadInt16();
             for (int i = 0; i < nCQ; i++)
             {
@@ -633,7 +636,6 @@ namespace Lara_Extractor
             area.TexCoord3 = new Vector2(0, 1);
             return (fb, area);
         }
-
         private readonly Dictionary<int, WadTexture> _solidColorCache = new();
 
         private TextureArea MakeSolidColorArea(int paletteIndex, bool isTriangle)
@@ -648,7 +650,7 @@ namespace Lara_Extractor
                 }
                 else
                 {
-                    img.SetPixel(0, 0, new ColorC(128, 128, 128, 255)); // gray fallback
+                    img.SetPixel(0, 0, new ColorC(128, 128, 128, 255)); // fallback
                 }
 
                 tex = new WadTexture(img);
@@ -663,7 +665,6 @@ namespace Lara_Extractor
             return area;
         }
 
-
         private WadAnimation ParseAnimation(int animIdx, int numBones = 0)
         {
             var anim = new WadAnimation();
@@ -675,7 +676,7 @@ namespace Lara_Extractor
 
             uint   frameOffset = br.ReadUInt32();
             byte   frameRate   = br.ReadByte();
-            br.ReadByte(); // frameSize dal file — sempre 0 in TR1, lo ricalcoliamo
+            byte   frameSizeRaw = br.ReadByte();
             ushort stateID     = br.ReadUInt16();
             br.ReadInt32(); br.ReadInt32();
             ushort frameStart  = br.ReadUInt16();
@@ -684,7 +685,7 @@ namespace Lara_Extractor
             ushort nextFrame   = br.ReadUInt16();
             br.ReadUInt16(); br.ReadUInt16(); br.ReadUInt16(); br.ReadUInt16();
 
-            int frameSize = numBones > 0 ? 10 + numBones * 2 : 40;
+            int frameSize = frameSizeRaw > 0 ? frameSizeRaw : Math.Max(9, 9 + numBones * 2);
 
             anim.Name          = $"anim_{animIdx}";
             anim.StateId       = stateID;
@@ -695,21 +696,11 @@ namespace Lara_Extractor
             int numFrames = frameEnd >= frameStart ? frameEnd - frameStart + 1 : 1;
             int wordStart = (int)(frameOffset / 2);
 
-           
-            if (wordStart < 0 || wordStart + 9 >= _frames.Length)
+            if (wordStart < 0 || wordStart + 9 > _frames.Length)
             {
                 anim.EndFrame = 0;
                 anim.KeyFrames.Add(new WadKeyFrame());
                 return anim;
-            }
-
-            int maxFramesAvailable = frameSize > 0
-                ? Math.Max(1, (_frames.Length - wordStart) / frameSize)
-                : 1;
-            if (numFrames > maxFramesAvailable)
-            {
-                _logger($"[TR1Parser]   Anim {animIdx}: clamped numFrames {numFrames} -> {maxFramesAvailable} (buffer limit)");
-                numFrames = Math.Max(1, maxFramesAvailable);
             }
 
             anim.EndFrame = (ushort)Math.Max(0, numFrames - 1);
@@ -717,7 +708,7 @@ namespace Lara_Extractor
             for (int f = 0; f < numFrames; f++)
             {
                 int wOff = wordStart + f * frameSize;
-                if (wOff + 10 >= _frames.Length) break;
+                if (wOff < 0 || wOff + 9 > _frames.Length) break;
                 anim.KeyFrames.Add(ParseKeyFrame(wOff, frameSize, numBones));
             }
 
@@ -730,27 +721,31 @@ namespace Lara_Extractor
         private WadKeyFrame ParseKeyFrame(int wordOffset, int frameSizeWords, int numBones = 0)
         {
             var kf = new WadKeyFrame();
-            if (wordOffset < 0 || wordOffset + 10 > _frames.Length) return kf;
+            if (wordOffset < 0 || wordOffset + 9 > _frames.Length) return kf;
 
             kf.BoundingBox = new BoundingBox(
                 new Vector3((short)_frames[wordOffset+0], NegateClamped(_frames[wordOffset+3]), (short)_frames[wordOffset+4]),
                 new Vector3((short)_frames[wordOffset+1], NegateClamped(_frames[wordOffset+2]), (short)_frames[wordOffset+5]));
             kf.Offset = new Vector3(
                 (short)_frames[wordOffset+6], NegateClamped(_frames[wordOffset+7]), (short)_frames[wordOffset+8]);
-            var frameDataList = new List<short>();
-            int totalAngleWords = Math.Max(0, frameSizeWords - 10);
-            for (int w = 0; w < totalAngleWords && (wordOffset+10+w) < _frames.Length; w++)
-                frameDataList.Add((short)_frames[wordOffset+10+w]);
+
+            int angleStart = wordOffset + 9;
+
+            int totalAngleWords = Math.Max(0, frameSizeWords - 9);
+            int safeWindow = Math.Max(totalAngleWords, numBones * 2);
+            int available = Math.Max(0, _frames.Length - angleStart);
+            int windowSize = Math.Min(safeWindow, available);
+
+            var frameDataList = new List<short>(windowSize);
+            for (int w = 0; w < windowSize; w++)
+                frameDataList.Add((short)_frames[angleStart + w]);
 
             int angleIdx = 0;
-            int anglesProduced = 0;
-            int maxAngles = numBones > 0 ? numBones : int.MaxValue;
-            while (angleIdx + 2 <= frameDataList.Count && anglesProduced < maxAngles)
+            for (int b = 0; b < numBones && angleIdx < frameDataList.Count; b++)
             {
                 int before = angleIdx;
-                kf.Angles.Add(WadKeyFrameRotation.FromTrAngle(ref angleIdx, frameDataList, true, false));
-                anglesProduced++;
-                if (angleIdx <= before) break;
+                kf.Angles.Add(WadKeyFrameRotation.FromTrAngle(ref angleIdx, frameDataList, false, false));
+                if (angleIdx <= before) { angleIdx = before + 1; } 
             }
 
             if (numBones > 0)
@@ -759,7 +754,7 @@ namespace Lara_Extractor
                 {
                     int dummy = 0;
                     var zero = new List<short> { 0, 0 };
-                    kf.Angles.Add(WadKeyFrameRotation.FromTrAngle(ref dummy, zero, true, false));
+                    kf.Angles.Add(WadKeyFrameRotation.FromTrAngle(ref dummy, zero, false, false));
                 }
                 if (kf.Angles.Count > numBones)
                     kf.Angles.RemoveRange(numBones, kf.Angles.Count - numBones);

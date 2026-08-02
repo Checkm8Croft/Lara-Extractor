@@ -4,10 +4,10 @@ using TombLib.Utils;
 namespace Lara_Extractor
 {
     /// <summary>
-    /// Implementazione silenziosa di IDialogHandler che non apre nessuna finestra UI.
-    /// Necessario perché TombLib.ImportFromFile internamente può chiamare RaiseDialog
-    /// per mostrare warning/errori durante il parsing del livello. Passare null causa
-    /// blocchi o NullReferenceException su alcuni percorsi di codice.
+    /// Silent implementation of IDialogHandler that never opens a UI window.
+    /// Needed because TombLib.ImportFromFile can internally call RaiseDialog
+    /// to show warnings/errors while parsing the level. Passing null causes
+    /// hangs or NullReferenceException on some code paths.
     /// </summary>
     public class SilentDialogHandler : IDialogHandler
     {
@@ -20,8 +20,8 @@ namespace Lara_Extractor
 
         public void RaiseDialog(IDialogDescription description)
         {
-            // Scarta silenziosamente tutti i dialog. Se abbiamo un logger,
-            // logghiamo almeno il tipo di dialog per debug.
+            // Silently discard all dialogs. If we have a logger, at least log
+            // the dialog type for debugging.
             if (_logger != null)
             {
                 string typeName = description?.GetType().Name ?? "Unknown";
@@ -36,7 +36,7 @@ namespace Lara_Extractor
             if (description == null) return string.Empty;
             try
             {
-                // Prova a leggere proprietà comuni tramite reflection
+                // Try reading common properties via reflection
                 var type = description.GetType();
                 var msgProp = type.GetProperty("Message") ?? type.GetProperty("Text") ?? type.GetProperty("Exception");
                 if (msgProp != null)
@@ -45,7 +45,7 @@ namespace Lara_Extractor
                     return val?.ToString() ?? string.Empty;
                 }
             }
-            catch { /* ignora */ }
+            catch { /* ignore */ }
             return description.ToString() ?? string.Empty;
         }
     }

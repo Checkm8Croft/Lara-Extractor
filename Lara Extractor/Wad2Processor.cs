@@ -27,11 +27,11 @@ namespace Lara_Extractor
 
         public void ExtractWad2()
         {
-            _logger("[Wad2] ========== AVVIO PIPELINE WAD2 ==========");
+            _logger("[Wad2] ========== STARTING WAD2 PIPELINE ==========");
 
             if (!File.Exists(_inputLevelPath))
             {
-                _logger("[Wad2 Errore] File non trovato.");
+                _logger("[Wad2 Error] File not found.");
                 return;
             }
 
@@ -56,30 +56,35 @@ namespace Lara_Extractor
 
             if (format == "UNKNOWN")
             {
-                _logger("[Wad2 Errore] Formato non riconosciuto.");
+                _logger("[Wad2 Error] Unrecognized format.");
                 return;
             }
 
             Wad2? resultWad = null;
 
-            // ── TR1: usa il parser nativo (TombLib LoadLevel si blocca per TR1) ──
+            // ── TR1: use the native parser (TombLib LoadLevel hangs on TR1) ──
             if (format == "TR1")
             {
-                _logger("[Wad2] TR1: utilizzo parser nativo (bypass TombLib LoadLevel).");
+                _logger("[Wad2] TR1: using native parser (bypassing TombLib LoadLevel).");
                 var builder = new TR1Wad2Builder(_inputLevelPath, _logger);
+                resultWad = builder.Build();
+            }
+            else if (format == "TR3" || format == "TR2")
+            {
+                _logger($"[Wad2] {format}: using native parser (bypassing TombLib ConvertTrLevel).");
+                var builder = new TR3Wad2Builder(_inputLevelPath, _logger);
                 resultWad = builder.Build();
             }
             else
             {
-                // ── TR4/TR5: usa TombLib LoadLevel + ConvertTrLevel ──────────
-                // ── TR2/TR3: usa TombLib (potrebbero bloccarsi come TR1 — da verificare) ──
-                _logger($"[Wad2] {format}: utilizzo TombLib LoadLevel + ConvertTrLevel.");
+                // ── TR4/TR5: use TombLib LoadLevel + ConvertTrLevel ──────────
+                _logger($"[Wad2] {format}: using TombLib LoadLevel + ConvertTrLevel.");
                 resultWad = RunViaTombLib();
             }
 
             if (resultWad == null)
             {
-                _logger("[Wad2 Errore] Nessun Wad2 prodotto.");
+                _logger("[Wad2 Error] No Wad2 produced.");
                 return;
             }
 
@@ -88,7 +93,7 @@ namespace Lara_Extractor
 
         private Wad2? RunViaTombLib()
         {
-            _logger("[Wad2] TombLib: avvio thread STA con Dispatcher pump...");
+            _logger("[Wad2] TombLib: starting STA thread with Dispatcher pump...");
 
             TrLevel?   trLevel     = null;
             Wad2?      resultWad   = null;
@@ -111,7 +116,7 @@ namespace Lara_Extractor
             dispReady.Wait(5000);
             if (staDisp == null)
             {
-                _logger("[Wad2 Errore] Dispatcher STA non pronto.");
+                _logger("[Wad2 Error] STA Dispatcher not ready.");
                 return null;
             }
 
@@ -127,12 +132,12 @@ namespace Lara_Extractor
                 }
                 catch (EndOfStreamException ex)
                 {
-                    _logger($"[Wad2] [STA] EndOfStreamException (bug TR4/TR5 .NET10): {ex.Message}");
+                    _logger($"[Wad2] [STA] EndOfStreamException (TR4/TR5 .NET10 bug): {ex.Message}");
                     loadDone = true;
                 }
                 catch (Exception ex)
                 {
-                    _logger($"[Wad2] [STA] LoadLevel errore: {ex.GetType().Name}: {ex.Message}");
+                    _logger($"[Wad2] [STA] LoadLevel error: {ex.GetType().Name}: {ex.Message}");
                     thrownEx = ex;
                     loadDone = true;
                 }
@@ -144,10 +149,10 @@ namespace Lara_Extractor
                 Thread.Sleep(ProgressLogIntervalSeconds * 1000);
                 if (!loadDone)
                 {
-                    _logger($"[Wad2] LoadLevel in corso... {sw.Elapsed.TotalSeconds:F0}s");
+                    _logger($"[Wad2] LoadLevel in progress... {sw.Elapsed.TotalSeconds:F0}s");
                     if (sw.Elapsed.TotalSeconds >= TimeoutSeconds)
                     {
-                        _logger($"[Wad2 Errore] TIMEOUT LoadLevel dopo {TimeoutSeconds}s.");
+                        _logger($"[Wad2 Error] TIMEOUT LoadLevel after {TimeoutSeconds}s.");
                         staDisp.InvokeShutdown();
                         return null;
                     }
@@ -156,7 +161,7 @@ namespace Lara_Extractor
 
             if (thrownEx != null && trLevel == null)
             {
-                _logger("[Wad2 Errore] LoadLevel fallito.");
+                _logger("[Wad2 Error] LoadLevel failed.");
                 staDisp.InvokeShutdown();
                 return null;
             }
@@ -175,7 +180,7 @@ namespace Lara_Extractor
 
                     if (method == null)
                     {
-                        _logger("[Wad2] [STA] ConvertTrLevel non trovato.");
+                        _logger("[Wad2] [STA] ConvertTrLevel not found.");
                         convertDone = true;
                         return;
                     }
@@ -187,13 +192,13 @@ namespace Lara_Extractor
                 catch (TargetInvocationException tie)
                 {
                     var inner = tie.InnerException ?? tie;
-                    _logger($"[Wad2] [STA] ConvertTrLevel errore: {inner.GetType().Name}: {inner.Message}");
+                    _logger($"[Wad2] [STA] ConvertTrLevel error: {inner.GetType().Name}: {inner.Message}");
                     thrownEx = inner;
                     convertDone = true;
                 }
                 catch (Exception ex)
                 {
-                    _logger($"[Wad2] [STA] ConvertTrLevel errore: {ex.GetType().Name}: {ex.Message}");
+                    _logger($"[Wad2] [STA] ConvertTrLevel error: {ex.GetType().Name}: {ex.Message}");
                     thrownEx = ex;
                     convertDone = true;
                 }
@@ -209,10 +214,10 @@ namespace Lara_Extractor
                 Thread.Sleep(ProgressLogIntervalSeconds * 1000);
                 if (!convertDone)
                 {
-                    _logger($"[Wad2] ConvertTrLevel in corso... {swC.Elapsed.TotalSeconds:F0}s");
+                    _logger($"[Wad2] ConvertTrLevel in progress... {swC.Elapsed.TotalSeconds:F0}s");
                     if (swC.Elapsed.TotalSeconds >= TimeoutSeconds)
                     {
-                        _logger("[Wad2 Errore] TIMEOUT ConvertTrLevel.");
+                        _logger("[Wad2 Error] TIMEOUT ConvertTrLevel.");
                         staDisp.InvokeShutdown();
                         return null;
                     }
@@ -225,7 +230,7 @@ namespace Lara_Extractor
 
         private void LogTrLevelContents(TrLevel trLevel)
         {
-            _logger("[Wad2] --- Contenuto TrLevel ---");
+            _logger("[Wad2] --- TrLevel Contents ---");
             try
             {
                 var t = trLevel.GetType();
@@ -245,7 +250,7 @@ namespace Lara_Extractor
 
         private void SaveResult(Wad2 wad)
         {
-            _logger("[Wad2] --- Salvataggio ---");
+            _logger("[Wad2] --- Saving ---");
             _logger($"[Wad2]   Moveables : {wad.Moveables.Count}");
             _logger($"[Wad2]   Statics   : {wad.Statics.Count}");
             _logger($"[Wad2]   Sprites   : {wad.SpriteSequences.Count}");
@@ -256,7 +261,7 @@ namespace Lara_Extractor
                 Directory.CreateDirectory(dir);
 
             Wad2Writer.SaveToFile(wad, _outputWad2Path);
-            _logger("[Wad2] ========== WAD2 SALVATO OK ==========");
+            _logger("[Wad2] ========== WAD2 SAVED OK ==========");
         }
     }
 }

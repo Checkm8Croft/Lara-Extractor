@@ -70,7 +70,7 @@ namespace Lara_Extractor
                 catch (Exception ex)
                 {
                     UpdateLog($"[CRITICAL ERROR] {ex.GetType().Name}: {ex.Message}");
-                    // Stack trace completa per debug
+                    // Full stack trace for debugging
                     var lines = (ex.StackTrace ?? "").Split('\n');
                     foreach (var line in lines)
                     {
