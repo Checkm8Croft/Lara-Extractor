@@ -104,9 +104,56 @@ jobs:
 
     # Create the app package by building and packaging the Windows Application Packaging project
     - name: Create the app package
-      run: msbuild $env:Wap_Project_Path /p:Configuration=$env:Configuration /p:UapAppxPackageBuildMode=$env:Appx_Package_Build_Mode /p:AppxBundle=$env:Appx_Bundle /p:PackageCertificateKeyFile=GitHubActionsWorkflow.pfx /p:PackageCertificatePassword=${{ secrets.Pfx_Key }}
+      run: msbuild $env:Wap_Project_Path /p:Configuration=$env:Configuration /p:UapAppxPackageBuildMode=$env:Appx_Package_Build_Mode /p:AppxBundle=$env:Appx_Bundle /p:PackageCertificateKeyFile=GitHubA[...]
       env:
         Appx_Bundle: Always
         Appx_Bundle_Platforms: x86|x64
         Appx_Package_Build_Mode: StoreUpload
         Configuration: ${{ matrix.configuration }}
+
+    # Publish compiled EXE to an existing release with tag "lara" and replace existing asset
+    - name: Upload compiled EXE to release 'lara'
+      if: success()
+      shell: powershell
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        $tag = 'lara'
+        $repoFull = $Env:GITHUB_REPOSITORY  # owner/repo
+
+        Write-Host "Looking up release with tag '$tag' in $repoFull"
+        $apiUrl = "https://api.github.com/repos/$repoFull/releases/tags/$tag"
+        try {
+          $release = Invoke-RestMethod -Method Get -Uri $apiUrl -Headers @{ Authorization = "token $env:GITHUB_TOKEN"; "User-Agent" = "github-actions" }
+        } catch {
+          Write-Error "Release with tag '$tag' not found or API access failed: $_"
+          exit 1
+        }
+
+        $releaseId = $release.id
+        Write-Host "Found release id: $releaseId"
+
+        # Find the compiled exe inside the repository build outputs. Adjust the search path if needed.
+        $workspace = $Env:GITHUB_WORKSPACE
+        $candidates = Get-ChildItem -Path (Join-Path $workspace 'Lara Extractor') -Recurse -Include '*.exe' -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '\\TestResults\\' }
+        if (-not $candidates -or $candidates.Count -eq 0) {
+          Write-Error "No compiled EXE found under 'Lara Extractor' directory. Adjust the search path to your publish output."
+          exit 1
+        }
+        # Pick the most recently modified exe
+        $exe = $candidates | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        Write-Host "Will upload asset: $($exe.FullName)"
+
+        # If an asset with same name exists, delete it so we replace it
+        $existing = $release.assets | Where-Object { $_.name -eq $exe.Name }
+        if ($existing) {
+          Write-Host "Existing asset found (id=$($existing.id)). Deleting before upload..."
+          $deleteUrl = "https://api.github.com/repos/$repoFull/releases/assets/$($existing.id)"
+          Invoke-RestMethod -Method Delete -Uri $deleteUrl -Headers @{ Authorization = "token $env:GITHUB_TOKEN"; "User-Agent" = "github-actions" }
+        }
+
+        # Upload the asset
+        $uploadUrl = "https://uploads.github.com/repos/$repoFull/releases/$releaseId/assets?name=$($exe.Name)"
+        Write-Host "Uploading to: $uploadUrl"
+        Invoke-RestMethod -Method Post -Uri $uploadUrl -Headers @{ Authorization = "token $env:GITHUB_TOKEN"; "User-Agent" = "github-actions"; "Content-Type" = "application/octet-stream" } -InFile $exe.FullName -UseBasicParsing
+        Write-Host "Upload completed."
