@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.IO.Compression;
 
@@ -341,9 +341,9 @@ namespace Lara_Extractor
             for (int i = 0; i < indexed.Length; i++)
             {
                 int ci = indexed[i] * 3;
-                rgb[i * 3]     = pal8[ci];
-                rgb[i * 3 + 1] = pal8[ci + 1];
-                rgb[i * 3 + 2] = pal8[ci + 2];
+                rgb[i * 3]     = pal8[ci + 2]; // B
+                rgb[i * 3 + 1] = pal8[ci + 1]; // G
+                rgb[i * 3 + 2] = pal8[ci];     // R
             }
             return rgb;
         }
