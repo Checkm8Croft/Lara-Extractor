@@ -22,6 +22,7 @@ namespace Lara_Extractor
         private int[]    _animNumFrames    = Array.Empty<int>();  
         private int[]    _animFrameSizes   = Array.Empty<int>();  
         private int[]    _meshTrees       = Array.Empty<int>();
+        private short[]  _animCommands    = Array.Empty<short>();
         private ushort[] _frames          = Array.Empty<ushort>();
         private TR1Model[]          _models          = Array.Empty<TR1Model>();
         private TR1StaticMesh[]     _statics         = Array.Empty<TR1StaticMesh>();
@@ -155,7 +156,10 @@ namespace Lara_Extractor
 
                 uint nSC = br.ReadUInt32(); br.BaseStream.Seek(nSC * 6, SeekOrigin.Current);
                 uint nAD = br.ReadUInt32(); br.BaseStream.Seek(nAD * 8, SeekOrigin.Current);
-                uint nAC = br.ReadUInt32(); br.BaseStream.Seek(nAC * 2, SeekOrigin.Current);
+                uint nAC = br.ReadUInt32();
+                _animCommands = new short[nAC];
+                for (int i = 0; i < nAC; i++) _animCommands[i] = br.ReadInt16();
+                _logger($"[TR1Parser] AnimCommands: {nAC}");
 
                 uint nMT = br.ReadUInt32();
                 _meshTrees = new int[nMT];
@@ -690,7 +694,10 @@ namespace Lara_Extractor
             ushort frameEnd    = br.ReadUInt16();
             ushort nextAnim    = br.ReadUInt16();
             ushort nextFrame   = br.ReadUInt16();
-            br.ReadUInt16(); br.ReadUInt16(); br.ReadUInt16(); br.ReadUInt16();
+            ushort nSC = br.ReadUInt16();
+            ushort scOff = br.ReadUInt16();
+            ushort nAC = br.ReadUInt16();
+            ushort acOff = br.ReadUInt16();
 
             int frameSize = numBones > 0 ? 10 + numBones * 2 : 40;
 
@@ -731,6 +738,45 @@ namespace Lara_Extractor
 
             if (anim.KeyFrames.Count == 0)
                 anim.KeyFrames.Add(new WadKeyFrame());
+
+            int ptr = acOff;
+            for (int c = 0; c < nAC && ptr < _animCommands.Length; c++)
+            {
+                short opcode = _animCommands[ptr++];
+                var cmd = new WadAnimCommand { Type = (WadAnimCommandType)opcode };
+                
+                switch (opcode)
+                {
+                    case 1:
+                        if (ptr + 2 < _animCommands.Length)
+                        {
+                            cmd.Parameter1 = _animCommands[ptr++];
+                            cmd.Parameter2 = _animCommands[ptr++];
+                            cmd.Parameter3 = _animCommands[ptr++];
+                        }
+                        break;
+                    case 2:
+                        if (ptr + 1 < _animCommands.Length)
+                        {
+                            cmd.Parameter1 = _animCommands[ptr++];
+                            cmd.Parameter2 = _animCommands[ptr++];
+                        }
+                        break;
+                    case 3:
+                    case 4:
+                        break;
+                    case 5:
+                    case 6:
+                        if (ptr + 1 < _animCommands.Length)
+                        {
+                            cmd.Parameter1 = _animCommands[ptr++];
+                            cmd.Parameter2 = _animCommands[ptr++];
+                            cmd.ConvertLegacyConditions();
+                        }
+                        break;
+                }
+                anim.AnimCommands.Add(cmd);
+            }
 
             return anim;
         }
