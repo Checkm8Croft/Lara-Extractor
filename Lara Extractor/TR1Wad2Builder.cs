@@ -259,28 +259,36 @@ namespace Lara_Extractor
             br.BaseStream.Position = 0;
             byte[] file = br.ReadBytes((int)fileLen);
             br.BaseStream.Position = savedPos;
-            int firstRiff = -1;
-            for (int i = 4; i < file.Length - 4; i++)
-            {
-                if (file[i]=='R' && file[i+1]=='I' && file[i+2]=='F' && file[i+3]=='F')
-                { firstRiff = i; break; }
-            }
 
-            if (firstRiff < 768) return BuildGrayscalePalette();
-
-            for (int i = firstRiff - 768; i >= Math.Max(0, firstRiff - 9000); i--)
+            for (int i = file.Length - 768; i >= 0; i--)
             {
                 bool valid = true;
                 for (int j = 0; j < 768; j++)
-                    if (file[i + j] > 63) { valid = false; break; }
+                {
+                    if (file[i + j] > 63)
+                    {
+                        valid = false;
+                        break;
+                    }
+                }
+                
                 if (valid)
                 {
-                    var pal = new byte[768];
-                    Buffer.BlockCopy(file, i, pal, 0, 768);
-                    for (int k = 0; k < 768; k++) pal[k] = (byte)(pal[k] * 4);
-                    return pal;
+                    int nonZeroCount = 0;
+                    for (int j = 0; j < 768; j++)
+                    {
+                        if (file[i + j] > 0) nonZeroCount++;
+                    }
+                    if (nonZeroCount > 10)
+                    {
+                        var pal = new byte[768];
+                        Buffer.BlockCopy(file, i, pal, 0, 768);
+                        for (int k = 0; k < 768; k++) pal[k] = (byte)(pal[k] * 4);
+                        return pal;
+                    }
                 }
             }
+
             return BuildGrayscalePalette();
         }
 

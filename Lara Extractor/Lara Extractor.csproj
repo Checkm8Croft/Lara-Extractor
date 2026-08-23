@@ -26,6 +26,7 @@
 
     <ItemGroup>
       <PackageReference Include="Blake3" Version="0.6.0" />
+      <PackageReference Include="NLog" Version="5.0.0" />
     </ItemGroup>
 
 </Project>

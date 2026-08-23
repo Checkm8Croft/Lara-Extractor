@@ -79,29 +79,14 @@ namespace Lara_Extractor
 
             byte[]? pal8 = null;
 
-            if (firstRiff >= 4)
+            int palOffset = FindTR1Palette(file);
+            if (palOffset >= 0)
             {
-                uint numSampleBytes = BitConverter.ToUInt32(file, firstRiff - 4);
-
-
-                int samplesEnd = firstRiff + (int)numSampleBytes;
-
-                if (samplesEnd + 4 <= file.Length)
-                {
-                    uint numSampleIndices = BitConverter.ToUInt32(file, samplesEnd);
-                    int afterSampleIndices = samplesEnd + 4 + (int)numSampleIndices * 4;
-
-                    
-                    int palOffset = FindTR1Palette(file, firstRiff);
-                    if (palOffset >= 0)
-                    {
-                        pal8 = new byte[768];
-                        Buffer.BlockCopy(file, palOffset, pal8, 0, 768);
-                        for (int i = 0; i < 768; i++)
-                            pal8[i] = (byte)Math.Min(255, pal8[i] * 4);
-                        _logger($"[TR1 Tex] Palette found at offset {palOffset}.");
-                    }
-                }
+                pal8 = new byte[768];
+                Buffer.BlockCopy(file, palOffset, pal8, 0, 768);
+                for (int i = 0; i < 768; i++)
+                    pal8[i] = (byte)Math.Min(255, pal8[i] * 4);
+                _logger($"[TR1 Tex] Palette found at offset {palOffset}.");
             }
 
             if (pal8 == null)
@@ -167,18 +152,24 @@ namespace Lara_Extractor
             _progressReporter(80);
         }
 
-        private static int FindTR1Palette(byte[] file, int searchBefore)
+        private static int FindTR1Palette(byte[] file)
         {
-            int limit = Math.Max(0, searchBefore - 768);
-            for (int i = searchBefore - 768; i >= limit - 8192; i--)
+            for (int i = file.Length - 768; i >= 0; i--)
             {
-                if (i < 0) break;
                 bool valid = true;
                 for (int j = 0; j < 768; j++)
                 {
                     if (file[i + j] > 63) { valid = false; break; }
                 }
-                if (valid) return i;
+                if (valid)
+                {
+                    int nonZeroCount = 0;
+                    for (int j = 0; j < 768; j++)
+                    {
+                        if (file[i + j] > 0) nonZeroCount++;
+                    }
+                    if (nonZeroCount > 10) return i;
+                }
             }
             return -1;
         }
