@@ -35,7 +35,7 @@ namespace Lara_Extractor
             string ext = Path.GetExtension(_filePath).ToLowerInvariant();
             _logger($"[Engine] Magic: 0x{magic:X8}  Ext: {ext.ToUpperInvariant()}");
 
-            if (ext == ".tr4" || ext == ".trc" || magic == 0x00345254)
+            if (ext == ".tr4" || ext == ".trc" || magic == 0x00345254 || magic == 0x00355254)
             {
                 _logger("[Engine] TR4/TR5 detected.");
                 ParseTR4TR5(br);
@@ -205,49 +205,75 @@ namespace Lara_Extractor
         }
 
         
+        private static byte[] ReadChunk(BinaryReader br)
+        {
+            uint uncompSize = br.ReadUInt32();
+            uint compSize   = br.ReadUInt32();
+            uint sizeToRead = compSize != 0 ? compSize : uncompSize;
+            if (sizeToRead == 0) return Array.Empty<byte>();
+            return br.ReadBytes((int)sizeToRead);
+        }
+
+        private static void SkipChunk(BinaryReader br)
+        {
+            uint uncompSize = br.ReadUInt32();
+            uint compSize   = br.ReadUInt32();
+            uint sizeToRead = compSize != 0 ? compSize : uncompSize;
+            if (sizeToRead > 0)
+            {
+                br.BaseStream.Seek(sizeToRead, SeekOrigin.Current);
+            }
+        }
+
         private void ParseTR4TR5(BinaryReader br)
         {
-            string label = Path.GetExtension(_filePath).ToLowerInvariant() == ".trc" ? "TR5" : "TR4";
+            string ext = Path.GetExtension(_filePath).ToLowerInvariant();
+            string label = ext == ".trc" ? "TR5" : "TR4";
 
             ushort numRoomTiles = br.ReadUInt16();
             ushort numObjTiles  = br.ReadUInt16();
             ushort numBumpTiles = br.ReadUInt16();
             _logger($"[{label} Tex] {numRoomTiles} room + {numObjTiles} obj + {numBumpTiles} bump tiles.");
 
-            uint uncomp32 = br.ReadUInt32();
-            uint comp32   = br.ReadUInt32();
-            byte[] compTex32 = br.ReadBytes((int)comp32);
+            // 1. 32-bit Textiles (room/obj/bump)
+            byte[] compTex32 = ReadChunk(br);
 
-            br.ReadUInt32();
-            br.ReadBytes((int)br.ReadUInt32());
+            // 2. 16-bit Textiles (room/obj/bump)
+            SkipChunk(br);
 
-            br.ReadUInt32();
-            br.ReadBytes((int)br.ReadUInt32());
+            // 3. 16-bit Misc Textiles (Sky / Font)
+            SkipChunk(br);
 
-            br.ReadUInt32();
-            br.ReadBytes((int)br.ReadUInt32());
+            // 4. Level Data
+            SkipChunk(br);
 
-            try
+            if (compTex32.Length > 0)
             {
-                byte[] texData  = DecompressZlib(compTex32);
-                int    pageSize = 256 * 256 * 4; 
-                int    numPages = texData.Length / pageSize;
-
-                string texDir = Path.Combine(_outputDir, "Textures");
-                Directory.CreateDirectory(texDir);
-
-                for (int p = 0; p < numPages; p++)
+                try
                 {
-                    byte[] page = new byte[pageSize];
-                    Buffer.BlockCopy(texData, p * pageSize, page, 0, pageSize);
+                    byte[] texData = (compTex32.Length >= 2 && compTex32[0] == 0x78)
+                        ? DecompressZlib(compTex32)
+                        : compTex32;
 
-                    WriteTga(Path.Combine(texDir, $"Tile_{p:D3}.tga"), page, 4, topLeftOrigin: true);
+                    int pageSize = 256 * 256 * 4; 
+                    int numPages = texData.Length / pageSize;
+
+                    string texDir = Path.Combine(_outputDir, "Textures");
+                    Directory.CreateDirectory(texDir);
+
+                    for (int p = 0; p < numPages; p++)
+                    {
+                        byte[] page = new byte[pageSize];
+                        Buffer.BlockCopy(texData, p * pageSize, page, 0, pageSize);
+
+                        WriteTga(Path.Combine(texDir, $"Tile_{p:D3}.tga"), page, 4, topLeftOrigin: true);
+                    }
+                    _logger($"[{label} Tex] {numPages} tiles 32-bit saved.");
                 }
-                _logger($"[{label} Tex] {numPages} tiles 32-bit saved.");
-            }
-            catch (Exception ex)
-            {
-                _logger($"[{label} Tex Error] {ex.Message}");
+                catch (Exception ex)
+                {
+                    _logger($"[{label} Tex Error] {ex.Message}");
+                }
             }
             _progressReporter(50);
 
@@ -257,62 +283,121 @@ namespace Lara_Extractor
         private void ExtractTR4TR5Audio(BinaryReader br, string label)
         {
             long remaining = br.BaseStream.Length - br.BaseStream.Position;
-            if (remaining < 8)
+            if (remaining < 4)
             {
-                _logger($"[{label} Audio] No audio given for the level block.");
+                _logger($"[{label} Audio] No audio data found at end of level.");
                 return;
             }
 
-            byte[] block = br.ReadBytes((int)remaining);
             string audioDir = Path.Combine(_outputDir, "Audio");
             Directory.CreateDirectory(audioDir);
 
-            int pos   = 0;
             int count = 0;
+            long startPos = br.BaseStream.Position;
 
-            uint possibleNum = BitConverter.ToUInt32(block, 0);
-            if (possibleNum > 0 && possibleNum <= 2000)
+            try
             {
-                pos = 4 + (int)possibleNum * 4;
-                _logger($"[{label} Audio] {possibleNum} sample indexed, gave from offset {pos}.");
-            }
+                // According to TRosettaStone:
+                // struct tr4_sample { uint32_t UncompressedSize; uint32_t CompressedSize; char WaveFile[]; };
+                // Directly after LevelData chunk comes uint32_t NumSamples, followed by NumSamples tr4_sample structures.
+                uint numSamples = br.ReadUInt32();
+                _logger($"[{label} Audio] Sound header reports {numSamples} sample(s).");
 
-            while (pos < block.Length - 8)
-            {
-                if (block[pos] == 'R' && block[pos+1] == 'I' &&
-                    block[pos+2] == 'F' && block[pos+3] == 'F')
+                if (numSamples > 0 && numSamples <= 5000)
                 {
-                    uint riffSize = BitConverter.ToUInt32(block, pos + 4);
-                    int  total    = (int)riffSize + 8;
-                    if (pos + total > block.Length) break;
-
-                    byte[] wav = new byte[total];
-                    Buffer.BlockCopy(block, pos, wav, 0, total);
-                    File.WriteAllBytes(Path.Combine(audioDir, $"SFX_{count:D3}.wav"), wav);
-                    count++;
-                    pos += total;
-                }
-                else
-                {
-                    uint uncompSize = BitConverter.ToUInt32(block, pos);
-                    uint compSize   = BitConverter.ToUInt32(block, pos + 4);
-
-                    if (compSize > 0 && compSize < 2 * 1024 * 1024 && pos + 8 + compSize <= block.Length)
+                    bool parseOk = true;
+                    for (uint i = 0; i < numSamples; i++)
                     {
-                        byte[] wavData = new byte[compSize];
-                        Buffer.BlockCopy(block, pos + 8, wavData, 0, (int)compSize);
-                        File.WriteAllBytes(Path.Combine(audioDir, $"SFX_{count:D3}.wav"), wavData);
+                        if (br.BaseStream.Position + 8 > br.BaseStream.Length)
+                        {
+                            _logger($"[{label} Audio Warning] Stream ended unexpectedly before sample {i}.");
+                            parseOk = false;
+                            break;
+                        }
+
+                        uint uncompSize = br.ReadUInt32();
+                        uint compSize   = br.ReadUInt32();
+
+                        if (compSize == 0 || compSize > br.BaseStream.Length - br.BaseStream.Position)
+                        {
+                            _logger($"[{label} Audio Warning] Sample {i} has invalid size ({compSize} bytes).");
+                            parseOk = false;
+                            break;
+                        }
+
+                        byte[] sampleData = br.ReadBytes((int)compSize);
+
+                        // If sampleData is zlib compressed (custom level variants), decompress to get the WAV
+                        byte[] wavBytes = sampleData;
+                        if (sampleData.Length >= 2 && sampleData[0] == 0x78 && (sampleData[1] == 0x9C || sampleData[1] == 0x01 || sampleData[1] == 0xDA))
+                        {
+                            try
+                            {
+                                byte[] decomp = DecompressZlib(sampleData);
+                                if (decomp.Length >= 4 && decomp[0] == 'R' && decomp[1] == 'I' && decomp[2] == 'F' && decomp[3] == 'F')
+                                {
+                                    wavBytes = decomp;
+                                }
+                            }
+                            catch { }
+                        }
+
+                        string wavPath = Path.Combine(audioDir, $"SFX_{i:D3}.wav");
+                        File.WriteAllBytes(wavPath, wavBytes);
                         count++;
-                        pos += 8 + (int)compSize;
                     }
-                    else
+
+                    if (parseOk && count > 0)
                     {
-                        pos++;
+                        // Read NumSampleIndices if present
+                        if (br.BaseStream.Position + 4 <= br.BaseStream.Length)
+                        {
+                            uint numSampleIndices = br.ReadUInt32();
+                            _logger($"[{label} Audio] {numSampleIndices} sample indices referenced in level.");
+                        }
+
+                        _logger($"[{label} Audio] Successfully extracted {count} WAV sound sample(s) according to TRosettaStone.");
+                        _progressReporter(80);
+                        return;
                     }
                 }
             }
+            catch (Exception ex)
+            {
+                _logger($"[{label} Audio Warning] TRosettaStone direct audio parsing error: {ex.Message}. Falling back to RIFF scanner...");
+            }
 
-            _logger($"[{label} Audio] Extracted {count} WAV samples.");
+            // Fallback: If structured parsing did not succeed, scan for embedded RIFF/WAVE chunks
+            if (count == 0)
+            {
+                _logger($"[{label} Audio] Scanning stream for embedded RIFF WAVE signatures...");
+                br.BaseStream.Position = startPos;
+                byte[] remainingBytes = br.ReadBytes((int)(br.BaseStream.Length - startPos));
+
+                int pos = 0;
+                while (pos <= remainingBytes.Length - 8)
+                {
+                    if (remainingBytes[pos] == 'R' && remainingBytes[pos + 1] == 'I' &&
+                        remainingBytes[pos + 2] == 'F' && remainingBytes[pos + 3] == 'F')
+                    {
+                        uint riffBodySize = BitConverter.ToUInt32(remainingBytes, pos + 4);
+                        int total = (int)riffBodySize + 8;
+                        if (total > 8 && pos + total <= remainingBytes.Length)
+                        {
+                            byte[] wav = new byte[total];
+                            Buffer.BlockCopy(remainingBytes, pos, wav, 0, total);
+                            File.WriteAllBytes(Path.Combine(audioDir, $"SFX_{count:D3}.wav"), wav);
+                            count++;
+                            pos += total;
+                            continue;
+                        }
+                    }
+                    pos++;
+                }
+
+                _logger($"[{label} Audio] Fallback scan extracted {count} WAV sample(s).");
+            }
+
             _progressReporter(80);
         }
 
