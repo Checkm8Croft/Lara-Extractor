@@ -26,7 +26,28 @@ namespace Lara_Extractor
             if (openFileDialog.ShowDialog() == true)
             {
                 TxtFilePath.Text = openFileDialog.FileName;
+                string defaultOutputDir = Path.Combine(Path.GetDirectoryName(openFileDialog.FileName) ?? "", "Extracted_Assets");
+                TxtOutputDir.Text = defaultOutputDir;
+
                 Log($"Target loaded: {Path.GetFileName(openFileDialog.FileName)} ({new FileInfo(openFileDialog.FileName).Length / 1024 / 1024} MB)");
+                Log($"Output destination: {defaultOutputDir}");
+            }
+        }
+
+        private void BtnBrowseOutput_Click(object sender, RoutedEventArgs e)
+        {
+            OpenFolderDialog folderDialog = new OpenFolderDialog
+            {
+                Title = "Select Output Directory",
+                InitialDirectory = !string.IsNullOrWhiteSpace(TxtOutputDir.Text) && Directory.Exists(TxtOutputDir.Text)
+                    ? TxtOutputDir.Text
+                    : (!string.IsNullOrWhiteSpace(TxtFilePath.Text) ? Path.GetDirectoryName(TxtFilePath.Text) : null)
+            };
+
+            if (folderDialog.ShowDialog() == true)
+            {
+                TxtOutputDir.Text = folderDialog.FolderName;
+                Log($"Output destination changed to: {folderDialog.FolderName}");
             }
         }
 
@@ -39,20 +60,27 @@ namespace Lara_Extractor
                 return;
             }
 
-            string outputDir      = Path.Combine(Path.GetDirectoryName(filePath) ?? "", "Extracted_Assets");
+            string outputDir = TxtOutputDir.Text?.Trim() ?? "";
+            if (string.IsNullOrEmpty(outputDir))
+            {
+                outputDir = Path.Combine(Path.GetDirectoryName(filePath) ?? "", "Extracted_Assets");
+                TxtOutputDir.Text = outputDir;
+            }
+
             string wad2FileName   = Path.GetFileNameWithoutExtension(filePath) + ".wad2";
             string outputWad2Path = Path.Combine(outputDir, "Wads", wad2FileName);
 
             ExtractionProgress.Value = 0;
             TxtLog.Clear();
             Log("[Engine] Starting comprehensive asset unpacking pipeline...");
+            Log($"[Engine] Output directory: {outputDir}");
 
             await Task.Run(async () =>
             {
                 try
                 {
                     UpdateLog("[Pipeline] Phase 1: Launching AssetProcessor for raw data...");
-                    var processor = new AssetProcessor(filePath, UpdateLog, UpdateProgress);
+                    var processor = new AssetProcessor(filePath, UpdateLog, UpdateProgress, outputDir);
                     processor.UnpackAll();
                     processor = null;
                     GC.Collect();

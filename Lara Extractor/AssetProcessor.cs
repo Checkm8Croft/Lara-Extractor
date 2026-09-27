@@ -14,18 +14,22 @@ namespace Lara_Extractor
         private readonly Action<double> _progressReporter;
         private string _outputDir = "";
 
-        public AssetProcessor(string filePath, Action<string> logger, Action<double> progressReporter)
+        public AssetProcessor(string filePath, Action<string> logger, Action<double> progressReporter, string? outputDir = null)
         {
             _filePath = filePath;
             _logger = logger;
             _progressReporter = progressReporter;
+            _outputDir = outputDir ?? "";
         }
 
         public void UnpackAll()
         {
-            _outputDir = Path.Combine(
-                Path.GetDirectoryName(_filePath) ?? "",
-                "Extracted_Assets");
+            if (string.IsNullOrWhiteSpace(_outputDir))
+            {
+                _outputDir = Path.Combine(
+                    Path.GetDirectoryName(_filePath) ?? "",
+                    "Extracted_Assets");
+            }
             Directory.CreateDirectory(_outputDir);
 
             using var fs = new FileStream(_filePath, FileMode.Open, FileAccess.Read);
