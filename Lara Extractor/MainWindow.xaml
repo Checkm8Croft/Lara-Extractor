@@ -5,9 +5,10 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Lara_Extractor"
         mc:Ignorable="d"
-        Title="Lara Extractor" Height="480" Width="800" MinHeight="420" MinWidth="600">
+        Title="Lara Extractor" Height="520" Width="800" MinHeight="460" MinWidth="600">
     <Grid Margin="20">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -27,7 +28,7 @@
             <Button Grid.Column="1" Content="Browse Level..." Width="130" Margin="10,0,0,0" Click="BtnBrowse_Click" Background="#34495E" Foreground="White" FontWeight="Bold"/>
         </Grid>
 
-        <Grid Grid.Row="2" Margin="0,0,0,15">
+        <Grid Grid.Row="2" Margin="0,0,0,10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
@@ -36,11 +37,18 @@
             <Button Grid.Column="1" Content="Browse Output..." Width="130" Margin="10,0,0,0" Click="BtnBrowseOutput_Click" Background="#34495E" Foreground="White" FontWeight="Bold"/>
         </Grid>
 
-        <TextBox x:Name="TxtLog" Grid.Row="3" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,0,0,15" VerticalAlignment="Center">
+            <TextBlock Text="Extract:" FontWeight="Bold" Foreground="#2C3E50" VerticalAlignment="Center" Margin="0,0,15,0"/>
+            <CheckBox x:Name="ChkExtractTextures" Content="Textures" IsChecked="True" FontWeight="SemiBold" Foreground="#2C3E50" Margin="0,0,20,0" VerticalAlignment="Center"/>
+            <CheckBox x:Name="ChkExtractAudio" Content="Audio (SFX)" IsChecked="True" FontWeight="SemiBold" Foreground="#2C3E50" Margin="0,0,20,0" VerticalAlignment="Center"/>
+            <CheckBox x:Name="ChkExtractWad2" Content="3D Assets (Wad2)" IsChecked="True" FontWeight="SemiBold" Foreground="#2C3E50" Margin="0,0,20,0" VerticalAlignment="Center"/>
+        </StackPanel>
+
+        <TextBox x:Name="TxtLog" Grid.Row="4" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
                  VerticalScrollBarVisibility="Auto" Background="#1E1E1E" Foreground="#00FF00" 
                  FontFamily="Consolas" Padding="10"/>
 
-        <Grid Grid.Row="4" Margin="0,15,0,0">
+        <Grid Grid.Row="5" Margin="0,15,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>

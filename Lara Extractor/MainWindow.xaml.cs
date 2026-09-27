@@ -67,6 +67,16 @@ namespace Lara_Extractor
                 TxtOutputDir.Text = outputDir;
             }
 
+            bool extractTextures = ChkExtractTextures.IsChecked == true;
+            bool extractAudio    = ChkExtractAudio.IsChecked == true;
+            bool extractWad2     = ChkExtractWad2.IsChecked == true;
+
+            if (!extractTextures && !extractAudio && !extractWad2)
+            {
+                MessageBox.Show("Please select at least one component to extract (Textures, Audio, or 3D Assets).", "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
             string wad2FileName   = Path.GetFileNameWithoutExtension(filePath) + ".wad2";
             string outputWad2Path = Path.Combine(outputDir, "Wads", wad2FileName);
 
@@ -74,6 +84,7 @@ namespace Lara_Extractor
             TxtLog.Clear();
             Log("[Engine] Starting comprehensive asset unpacking pipeline...");
             Log($"[Engine] Output directory: {outputDir}");
+            Log($"[Engine] Selected: Textures={extractTextures}, Audio={extractAudio}, Wad2={extractWad2}");
 
             bool saveLog = ChkSaveLog.IsChecked == true;
 
@@ -81,18 +92,32 @@ namespace Lara_Extractor
             {
                 try
                 {
-                    UpdateLog("[Pipeline] Phase 1: Launching AssetProcessor for raw data...");
-                    var processor = new AssetProcessor(filePath, UpdateLog, UpdateProgress, outputDir);
-                    processor.UnpackAll();
-                    processor = null;
-                    GC.Collect();
-                    GC.WaitForPendingFinalizers();
-                    await Task.Delay(1500);
-                    UpdateLog("--------------------------------------------------");
+                    if (extractTextures || extractAudio)
+                    {
+                        UpdateLog("[Pipeline] Phase 1: Launching AssetProcessor for raw data...");
+                        var processor = new AssetProcessor(filePath, UpdateLog, UpdateProgress, outputDir, extractTextures, extractAudio);
+                        processor.UnpackAll();
+                        processor = null;
+                        GC.Collect();
+                        GC.WaitForPendingFinalizers();
+                        await Task.Delay(1000);
+                        UpdateLog("--------------------------------------------------");
+                    }
+                    else
+                    {
+                        UpdateLog("[Pipeline] Phase 1: Textures and Audio skipped (unselected).");
+                    }
 
-                    UpdateLog("[Pipeline] Phase 2: Launching Wad2Processor for 3D assets...");
-                    var wad2Processor = new Wad2Processor(filePath, outputWad2Path, UpdateLog);
-                    wad2Processor.ExtractWad2();
+                    if (extractWad2)
+                    {
+                        UpdateLog("[Pipeline] Phase 2: Launching Wad2Processor for 3D assets...");
+                        var wad2Processor = new Wad2Processor(filePath, outputWad2Path, UpdateLog);
+                        wad2Processor.ExtractWad2();
+                    }
+                    else
+                    {
+                        UpdateLog("[Pipeline] Phase 2: 3D assets (Wad2) skipped (unselected).");
+                    }
 
                     UpdateLog("[Pipeline] Pipeline finished successfully!");
                     UpdateProgress(100);

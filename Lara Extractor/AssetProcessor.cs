@@ -12,14 +12,18 @@ namespace Lara_Extractor
         private readonly string _filePath;
         private readonly Action<string> _logger;
         private readonly Action<double> _progressReporter;
+        private readonly bool _extractTextures;
+        private readonly bool _extractAudio;
         private string _outputDir = "";
 
-        public AssetProcessor(string filePath, Action<string> logger, Action<double> progressReporter, string? outputDir = null)
+        public AssetProcessor(string filePath, Action<string> logger, Action<double> progressReporter, string? outputDir = null, bool extractTextures = true, bool extractAudio = true)
         {
             _filePath = filePath;
             _logger = logger;
             _progressReporter = progressReporter;
             _outputDir = outputDir ?? "";
+            _extractTextures = extractTextures;
+            _extractAudio = extractAudio;
         }
 
         public void UnpackAll()
@@ -101,56 +105,70 @@ namespace Lara_Extractor
                     pal8[i * 3] = pal8[i * 3 + 1] = pal8[i * 3 + 2] = (byte)i;
             }
 
-            string texDir = Path.Combine(_outputDir, "Textures");
-            Directory.CreateDirectory(texDir);
-
-            int tilesStart = 8; 
-            for (uint i = 0; i < numTiles; i++)
+            if (_extractTextures)
             {
-                int offset = tilesStart + (int)i * 65536;
-                byte[] indexed = new byte[65536];
-                Buffer.BlockCopy(file, offset, indexed, 0, 65536);
-                byte[] rgb24 = ApplyPalette8(indexed, pal8);
-                WriteTga(Path.Combine(texDir, $"Tile_{i:D3}.tga"), rgb24, 3, topLeftOrigin: true);
-            }
-            _logger($"[TR1 Tex] {numTiles} tiles saved.");
-            _progressReporter(40);
+                string texDir = Path.Combine(_outputDir, "Textures");
+                Directory.CreateDirectory(texDir);
 
-            if (firstRiff >= 4)
-            {
-                uint numSampleBytes = BitConverter.ToUInt32(file, firstRiff - 4);
-                _logger($"[TR1 Audio] Block sample at offset {firstRiff}, {numSampleBytes:N0} bytes.");
-
-                string audioDir = Path.Combine(_outputDir, "Audio");
-                Directory.CreateDirectory(audioDir);
-
-                int pos   = firstRiff;
-                int end   = firstRiff + (int)numSampleBytes;
-                int count = 0;
-
-                while (pos < end - 8 && pos < file.Length - 8)
+                int tilesStart = 8; 
+                for (uint i = 0; i < numTiles; i++)
                 {
-                    if (file[pos] != 'R' || file[pos+1] != 'I' ||
-                        file[pos+2] != 'F' || file[pos+3] != 'F')
-                        break;
-
-                    uint riffBodySize = BitConverter.ToUInt32(file, pos + 4);
-                    int  total        = (int)riffBodySize + 8;
-                    if (pos + total > file.Length) break;
-
-                    byte[] wav = new byte[total];
-                    Buffer.BlockCopy(file, pos, wav, 0, total);
-                    File.WriteAllBytes(Path.Combine(audioDir, $"SFX_{count:D3}.wav"), wav);
-                    count++;
-
-                    pos += total;
+                    int offset = tilesStart + (int)i * 65536;
+                    byte[] indexed = new byte[65536];
+                    Buffer.BlockCopy(file, offset, indexed, 0, 65536);
+                    byte[] rgb24 = ApplyPalette8(indexed, pal8);
+                    WriteTga(Path.Combine(texDir, $"Tile_{i:D3}.tga"), rgb24, 3, topLeftOrigin: true);
                 }
-
-                _logger($"[TR1 Audio] Extracted {count} WAV samples.");
+                _logger($"[TR1 Tex] {numTiles} tiles saved.");
             }
             else
             {
-                _logger("[TR1 Audio] No RIFF samples found in the file.");
+                _logger("[TR1 Tex] Texture extraction skipped.");
+            }
+            _progressReporter(40);
+
+            if (_extractAudio)
+            {
+                if (firstRiff >= 4)
+                {
+                    uint numSampleBytes = BitConverter.ToUInt32(file, firstRiff - 4);
+                    _logger($"[TR1 Audio] Block sample at offset {firstRiff}, {numSampleBytes:N0} bytes.");
+
+                    string audioDir = Path.Combine(_outputDir, "Audio");
+                    Directory.CreateDirectory(audioDir);
+
+                    int pos   = firstRiff;
+                    int end   = firstRiff + (int)numSampleBytes;
+                    int count = 0;
+
+                    while (pos < end - 8 && pos < file.Length - 8)
+                    {
+                        if (file[pos] != 'R' || file[pos+1] != 'I' ||
+                            file[pos+2] != 'F' || file[pos+3] != 'F')
+                            break;
+
+                        uint riffBodySize = BitConverter.ToUInt32(file, pos + 4);
+                        int  total        = (int)riffBodySize + 8;
+                        if (pos + total > file.Length) break;
+
+                        byte[] wav = new byte[total];
+                        Buffer.BlockCopy(file, pos, wav, 0, total);
+                        File.WriteAllBytes(Path.Combine(audioDir, $"SFX_{count:D3}.wav"), wav);
+                        count++;
+
+                        pos += total;
+                    }
+
+                    _logger($"[TR1 Audio] Extracted {count} WAV samples.");
+                }
+                else
+                {
+                    _logger("[TR1 Audio] No RIFF samples found in the file.");
+                }
+            }
+            else
+            {
+                _logger("[TR1 Audio] Audio extraction skipped.");
             }
 
             _progressReporter(80);
@@ -192,19 +210,34 @@ namespace Lara_Extractor
 
             br.ReadBytes((int)numTiles * 65536);
 
-            string texDir = Path.Combine(_outputDir, "Textures");
-            Directory.CreateDirectory(texDir);
-
-            for (uint i = 0; i < numTiles; i++)
+            if (_extractTextures)
             {
-                byte[] raw16  = br.ReadBytes(131072); 
-                byte[] bgra32 = Convert16To32(raw16);
-                WriteTga(Path.Combine(texDir, $"Tile_{i:D3}.tga"), bgra32, 4, topLeftOrigin: false);
+                string texDir = Path.Combine(_outputDir, "Textures");
+                Directory.CreateDirectory(texDir);
+
+                for (uint i = 0; i < numTiles; i++)
+                {
+                    byte[] raw16  = br.ReadBytes(131072); 
+                    byte[] bgra32 = Convert16To32(raw16);
+                    WriteTga(Path.Combine(texDir, $"Tile_{i:D3}.tga"), bgra32, 4, topLeftOrigin: false);
+                }
+                _logger($"[{label} Tex] {numTiles} tiles (16-bit) saved.");
             }
-            _logger($"[{label} Tex] {numTiles} tiles (16-bit) saved.");
+            else
+            {
+                br.BaseStream.Seek(131072L * numTiles, SeekOrigin.Current);
+                _logger($"[{label} Tex] Texture extraction skipped.");
+            }
             _progressReporter(40);
 
-            _logger($"[{label} Audio] Place Main.sfx in the same directory as the level file.");
+            if (_extractAudio)
+            {
+                _logger($"[{label} Audio] Place Main.sfx in the same directory as the level file.");
+            }
+            else
+            {
+                _logger($"[{label} Audio] Audio extraction skipped.");
+            }
             _progressReporter(70);
         }
 
@@ -251,7 +284,7 @@ namespace Lara_Extractor
             // 4. Level Data
             SkipChunk(br);
 
-            if (compTex32.Length > 0)
+            if (_extractTextures && compTex32.Length > 0)
             {
                 try
                 {
@@ -279,9 +312,20 @@ namespace Lara_Extractor
                     _logger($"[{label} Tex Error] {ex.Message}");
                 }
             }
+            else if (!_extractTextures)
+            {
+                _logger($"[{label} Tex] Texture extraction skipped.");
+            }
             _progressReporter(50);
 
-            ExtractTR4TR5Audio(br, label);
+            if (_extractAudio)
+            {
+                ExtractTR4TR5Audio(br, label);
+            }
+            else
+            {
+                _logger($"[{label} Audio] Audio extraction skipped.");
+            }
         }
 
         private void ExtractTR4TR5Audio(BinaryReader br, string label)
