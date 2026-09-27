@@ -132,7 +132,7 @@ namespace Lara_Extractor
                 }
                 catch (EndOfStreamException ex)
                 {
-                    _logger($"[Wad2] [STA] EndOfStreamException (TR4/TR5 .NET10 bug): {ex.Message}");
+                    _logger($"[Wad2] [STA] EndOfStreamException (TR4/TR5 .NET10 bug - Safe to ignore): {ex.Message}");
                     loadDone = true;
                 }
                 catch (Exception ex)
