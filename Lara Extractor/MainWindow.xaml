@@ -44,9 +44,12 @@
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
             <ProgressBar x:Name="ExtractionProgress" Height="20" Minimum="0" Maximum="100"/>
-            <Button Grid.Column="1" Content="Extract Assets" Width="130" Margin="10,0,0,0" Click="BtnExtract_Click" Background="#27AE60" Foreground="White" FontWeight="Bold"/>
+            <CheckBox x:Name="ChkSaveLog" Grid.Column="1" Content="Save Log to File" 
+                      Margin="15,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="#2C3E50" IsChecked="False"/>
+            <Button Grid.Column="2" Content="Extract Assets" Width="130" Margin="15,0,0,0" Click="BtnExtract_Click" Background="#27AE60" Foreground="White" FontWeight="Bold"/>
         </Grid>
     </Grid>
 </Window>

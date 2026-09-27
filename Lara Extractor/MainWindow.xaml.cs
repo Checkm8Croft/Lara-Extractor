@@ -75,6 +75,8 @@ namespace Lara_Extractor
             Log("[Engine] Starting comprehensive asset unpacking pipeline...");
             Log($"[Engine] Output directory: {outputDir}");
 
+            bool saveLog = ChkSaveLog.IsChecked == true;
+
             await Task.Run(async () =>
             {
                 try
@@ -110,6 +112,24 @@ namespace Lara_Extractor
                         UpdateLog($"[INNER] {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
                 }
             });
+
+            if (saveLog)
+            {
+                try
+                {
+                    string logFileName = $"{Path.GetFileNameWithoutExtension(filePath)}_log.txt";
+                    string logFilePath = Path.Combine(outputDir, logFileName);
+                    Directory.CreateDirectory(outputDir);
+
+                    string finalLog = TxtLog.Text + $"[{DateTime.Now:HH:mm:ss}] [Engine] Log file successfully saved to: {logFilePath}\n";
+                    File.WriteAllText(logFilePath, finalLog);
+                    Log($"[Engine] Log file successfully saved to: {logFilePath}");
+                }
+                catch (Exception logEx)
+                {
+                    Log($"[Warning] Failed to save log file: {logEx.Message}");
+                }
+            }
         }
 
         private void Log(string message)
