@@ -1,6 +1,6 @@
 ## Lara Extractor
 
-Lara Extractor is a tool for extract resources from Tomb Raider 1-5 (PC Only)
+Lara Extractor is a tool for extract resources from Tomb Raider 1-5 (PC Only) and TRNG
 
 - .phd
 - .tr2

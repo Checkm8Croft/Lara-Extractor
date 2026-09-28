@@ -47,6 +47,7 @@ namespace Lara_Extractor
                 0x0000002D => "TR2",
                 0xFF180038 or 0xFF080038 or 0xFF180034 => "TR3",
                 0x00345254 => "TR4/TR5",
+                0x63345254 => "TRNG",
                 _ => "UNKNOWN"
             };
 
@@ -75,9 +76,17 @@ namespace Lara_Extractor
                 var builder = new TR3Wad2Builder(_inputLevelPath, _logger);
                 resultWad = builder.Build();
             }
-            else
+            else if (format == "TR4/TR5" || format == "TRNG")
             {
-                // ── TR4/TR5: use TombLib LoadLevel + ConvertTrLevel ──────────
+                if (format == "TRNG" || TRNGWad2Processor.IsTRNGLevel(_inputLevelPath))
+                {
+                    _logger("[Wad2] TRNG: detected Tomb Raider Next Generation level. Delegating to TRNGWad2Processor...");
+                    var trngProcessor = new TRNGWad2Processor(_inputLevelPath, _outputWad2Path, _logger);
+                    trngProcessor.ExtractWad2();
+                    return;
+                }
+
+                // ── TR4/TR5 standard: use TombLib LoadLevel + ConvertTrLevel ──────────
                 _logger($"[Wad2] {format}: using TombLib LoadLevel + ConvertTrLevel.");
                 resultWad = RunViaTombLib();
             }

@@ -43,7 +43,12 @@ namespace Lara_Extractor
             string ext = Path.GetExtension(_filePath).ToLowerInvariant();
             _logger($"[Engine] Magic: 0x{magic:X8}  Ext: {ext.ToUpperInvariant()}");
 
-            if (ext == ".tr4" || ext == ".trc" || magic == 0x00345254 || magic == 0x00355254)
+            if (magic == 0x63345254)
+            {
+                _logger("[Engine] TRNG detected. Decrypting level before parsing assets.");
+                ParseTRNGDecrypted();
+            }
+            else if (ext == ".tr4" || ext == ".trc" || magic == 0x00345254 || magic == 0x00355254)
             {
                 _logger("[Engine] TR4/TR5 detected.");
                 ParseTR4TR5(br);
@@ -66,6 +71,36 @@ namespace Lara_Extractor
 
             _progressReporter(100);
         }
+
+        private void ParseTRNGDecrypted()
+        {
+            string decryptedPath = Path.Combine(
+                Path.GetTempPath(),
+                $"LaraExtractor_TRNG_Assets_{Guid.NewGuid():N}.tr4");
+
+            try
+            {
+                if (!TombLib.NG.NgEncryption.DecryptLevel(_filePath, decryptedPath))
+                    throw new InvalidDataException("TRNG level decryption failed.");
+
+                using var fs = new FileStream(decryptedPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                using var br = new BinaryReader(fs);
+                if (br.ReadUInt32() != 0x00345254)
+                    throw new InvalidDataException("Decrypted TRNG level has an invalid TR4 magic.");
+
+                ParseTRNG(br);
+            }
+            catch (Exception ex)
+            {
+                _logger($"[TRNG Error] Decrypted asset parsing failed: {ex.Message}");
+            }
+            finally
+            {
+                try { if (File.Exists(decryptedPath)) File.Delete(decryptedPath); }
+                catch { }
+            }
+        }
+
         private void ParseTR1(BinaryReader br)
         {
             long fileLen = br.BaseStream.Length;
@@ -325,6 +360,223 @@ namespace Lara_Extractor
             else
             {
                 _logger($"[{label} Audio] Audio extraction skipped.");
+            }
+        }
+
+        private void ParseTRNG(BinaryReader br)
+        {
+            _logger("[Engine] TRNG level parsing started...");
+
+            ushort numRoomTiles = br.ReadUInt16();
+            ushort numObjTiles  = br.ReadUInt16();
+            ushort numBumpTiles = br.ReadUInt16();
+            _logger($"[TRNG Tex] Header reports {numRoomTiles} room + {numObjTiles} obj + {numBumpTiles} bump tiles.");
+
+            // 1. 32-bit Textiles (room/obj/bump)
+            byte[] compTex32 = ReadChunk(br);
+
+            // 2. 16-bit Textiles (room/obj/bump)
+            byte[] compTex16 = ReadChunk(br);
+
+            // 3. 16-bit Misc Textiles (Sky / Font)
+            byte[] compMisc16 = ReadChunk(br);
+
+            // 4. Level Data
+            SkipChunk(br);
+
+            if (_extractTextures)
+            {
+                string texDir = Path.Combine(_outputDir, "Textures");
+                Directory.CreateDirectory(texDir);
+
+                // 32-bit tiles
+                if (compTex32.Length > 0)
+                {
+                    try
+                    {
+                        byte[] texData = (compTex32.Length >= 2 && compTex32[0] == 0x78)
+                            ? DecompressZlib(compTex32)
+                            : compTex32;
+
+                        int pageSize = 256 * 256 * 4;
+                        int numPages = texData.Length / pageSize;
+
+                        for (int p = 0; p < numPages; p++)
+                        {
+                            byte[] page = new byte[pageSize];
+                            Buffer.BlockCopy(texData, p * pageSize, page, 0, pageSize);
+                            WriteTga(Path.Combine(texDir, $"Tile_{p:D3}.tga"), page, 4, topLeftOrigin: true);
+                        }
+                        _logger($"[TRNG Tex] {numPages} 32-bit texture tiles saved.");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger($"[TRNG Tex Error] 32-bit tiles: {ex.Message}");
+                    }
+                }
+
+                // 16-bit misc tiles (Sky / Font)
+                if (compMisc16.Length > 0)
+                {
+                    try
+                    {
+                        byte[] miscData = (compMisc16.Length >= 2 && compMisc16[0] == 0x78)
+                            ? DecompressZlib(compMisc16)
+                            : compMisc16;
+
+                        int pageSize16 = 256 * 256 * 2;
+                        int numMiscPages = miscData.Length / pageSize16;
+
+                        for (int m = 0; m < numMiscPages; m++)
+                        {
+                            byte[] raw16 = new byte[pageSize16];
+                            Buffer.BlockCopy(miscData, m * pageSize16, raw16, 0, pageSize16);
+                            byte[] bgra32 = Convert16To32(raw16);
+                            WriteTga(Path.Combine(texDir, $"Misc_Tile_{m:D3}.tga"), bgra32, 4, topLeftOrigin: true);
+                        }
+                        if (numMiscPages > 0)
+                            _logger($"[TRNG Tex] {numMiscPages} 16-bit misc tiles (Sky/Font) converted and saved.");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger($"[TRNG Tex Error] Misc tiles: {ex.Message}");
+                    }
+                }
+            }
+            else
+            {
+                _logger("[TRNG Tex] Texture extraction skipped.");
+            }
+            _progressReporter(50);
+
+            if (_extractAudio)
+            {
+                ExtractTR4TR5Audio(br, "TRNG");
+            }
+            else
+            {
+                _logger("[TRNG Audio] Audio extraction skipped.");
+            }
+            _progressReporter(75);
+
+            // Phase 3: Extract any embedded files from TRNG Extra NG Header
+            ExtractTRNGExtraNGData();
+            _progressReporter(90);
+        }
+
+        private void ExtractTRNGExtraNGData()
+        {
+            try
+            {
+                var summary = TRNGWad2Processor.ParseNGHeaderSummary(_filePath);
+                if (!summary.HasNGHeader)
+                    return;
+
+                _logger($"[TRNG NG-Data] Processing extra NG Header ({summary.HeaderSize} bytes, {summary.FieldCount} chunks)...");
+
+                using var fs = new FileStream(_filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                using var br = new BinaryReader(fs);
+
+                fs.Seek(summary.HeaderOffset + 2, SeekOrigin.Begin); // skip initial check word (2 bytes)
+                int dataWordsCount = (int)(summary.HeaderSize - 2 - 8) / 2;
+                if (dataWordsCount <= 0) return;
+
+                ushort[] words = new ushort[dataWordsCount];
+                for (int w = 0; w < dataWordsCount; w++)
+                    words[w] = br.ReadUInt16();
+
+                int idx = 0;
+                int importedAudioCount = 0;
+                int importedTexCount = 0;
+                int importedOtherCount = 0;
+
+                while (idx < words.Length)
+                {
+                    ushort numWordsRaw = words[idx];
+                    int numberOfWords;
+                    int extraWords;
+
+                    if ((numWordsRaw & 0x8000) != 0)
+                    {
+                        if (idx + 1 >= words.Length) break;
+                        uint w1 = (uint)(words[idx++] & 0x7FFF);
+                        uint w2 = words[idx++];
+                        numberOfWords = (int)((w1 << 16) | w2);
+                        extraWords = 3;
+                    }
+                    else
+                    {
+                        numberOfWords = words[idx++];
+                        extraWords = 2;
+                    }
+
+                    if (numberOfWords == 0 || (ushort)numberOfWords == TRNGWad2Processor.NGTAG_END_SEQUENCE)
+                        break;
+
+                    if (idx >= words.Length) break;
+                    ushort tagType = words[idx++];
+
+                    int dataWords = numberOfWords - extraWords;
+                    if (dataWords > 0 && idx + dataWords <= words.Length)
+                    {
+                        if (tagType == TRNGWad2Processor.NGTAG_IMPORT_FILE && dataWords >= 46)
+                        {
+                            ushort tipoFile = words[idx + 2];
+                            byte[] nameBytes = new byte[80];
+                            Buffer.BlockCopy(words, (idx + 4) * 2, nameBytes, 0, 80);
+                            string rawName = System.Text.Encoding.ASCII.GetString(nameBytes).TrimEnd('\0', ' ');
+
+                            uint sizeFile = (uint)(words[idx + 44] | (words[idx + 45] << 16));
+                            int contentWordStart = idx + 46;
+                            int availableBytes = (dataWords - 46) * 2;
+
+                            if (sizeFile > 0 && sizeFile <= availableBytes)
+                            {
+                                byte[] fileBytes = new byte[sizeFile];
+                                Buffer.BlockCopy(words, contentWordStart * 2, fileBytes, 0, (int)sizeFile);
+
+                                string safeFileName = string.IsNullOrWhiteSpace(rawName) ? $"Imported_{idx}.bin" : Path.GetFileName(rawName);
+                                string fileExt = Path.GetExtension(safeFileName).ToLowerInvariant();
+
+                                if (_extractAudio && (tipoFile == 2 || fileExt == ".wav" || fileExt == ".ogg" || fileExt == ".mp3"))
+                                {
+                                    string audioDir = Path.Combine(_outputDir, "Audio", "Imported");
+                                    Directory.CreateDirectory(audioDir);
+                                    File.WriteAllBytes(Path.Combine(audioDir, safeFileName), fileBytes);
+                                    _logger($"[TRNG NG-Audio] Extracted imported sound: {safeFileName} ({sizeFile:N0} bytes)");
+                                    importedAudioCount++;
+                                }
+                                else if (_extractTextures && (fileExt == ".tga" || fileExt == ".bmp" || fileExt == ".png" || fileExt == ".jpg"))
+                                {
+                                    string texDir = Path.Combine(_outputDir, "Textures", "Imported");
+                                    Directory.CreateDirectory(texDir);
+                                    File.WriteAllBytes(Path.Combine(texDir, safeFileName), fileBytes);
+                                    _logger($"[TRNG NG-Tex] Extracted imported image: {safeFileName} ({sizeFile:N0} bytes)");
+                                    importedTexCount++;
+                                }
+                                else
+                                {
+                                    string miscDir = Path.Combine(_outputDir, "Imported_Files");
+                                    Directory.CreateDirectory(miscDir);
+                                    File.WriteAllBytes(Path.Combine(miscDir, safeFileName), fileBytes);
+                                    _logger($"[TRNG NG-Data] Extracted embedded file: {safeFileName} ({sizeFile:N0} bytes)");
+                                    importedOtherCount++;
+                                }
+                            }
+                        }
+                    }
+
+                    idx += Math.Max(0, dataWords);
+                }
+
+                if (importedAudioCount > 0 || importedTexCount > 0 || importedOtherCount > 0)
+                {
+                    _logger($"[TRNG NG-Data] Finished extracting NG files: Audio={importedAudioCount}, Textures={importedTexCount}, Other={importedOtherCount}.");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger($"[TRNG NG-Data Error] {ex.Message}");
             }
         }
 
