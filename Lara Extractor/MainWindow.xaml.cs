@@ -80,80 +80,87 @@ namespace Lara_Extractor
             string wad2FileName   = Path.GetFileNameWithoutExtension(filePath) + ".wad2";
             string outputWad2Path = Path.Combine(outputDir, "Wads", wad2FileName);
 
-            ExtractionProgress.Value = 0;
-            TxtLog.Clear();
-            Log("[Engine] Starting comprehensive asset unpacking pipeline...");
-            Log($"[Engine] Output directory: {outputDir}");
-            Log($"[Engine] Selected: Textures={extractTextures}, Audio={extractAudio}, Wad2={extractWad2}");
-
-            bool saveLog = ChkSaveLog.IsChecked == true;
-
-            await Task.Run(async () =>
+            BtnExtract.IsEnabled = false;
+            try
             {
-                try
+                ExtractionProgress.Value = 0;
+                TxtLog.Clear();
+                Log("[Engine] Starting comprehensive asset unpacking pipeline...");
+                Log($"[Engine] Output directory: {outputDir}");
+                Log($"[Engine] Selected: Textures={extractTextures}, Audio={extractAudio}, Wad2={extractWad2}");
+
+                bool saveLog = ChkSaveLog.IsChecked == true;
+
+                await Task.Run(async () =>
                 {
-                    if (extractTextures || extractAudio)
+                    try
                     {
-                        UpdateLog("[Pipeline] Phase 1: Launching AssetProcessor for raw data...");
-                        var processor = new AssetProcessor(filePath, UpdateLog, UpdateProgress, outputDir, extractTextures, extractAudio);
-                        processor.UnpackAll();
-                        processor = null;
-                        GC.Collect();
-                        GC.WaitForPendingFinalizers();
-                        await Task.Delay(1000);
-                        UpdateLog("--------------------------------------------------");
-                    }
-                    else
-                    {
-                        UpdateLog("[Pipeline] Phase 1: Textures and Audio skipped (unselected).");
-                    }
+                        if (extractTextures || extractAudio)
+                        {
+                            UpdateLog("[Pipeline] Phase 1: Launching AssetProcessor for raw data...");
+                            var processor = new AssetProcessor(filePath, UpdateLog, UpdateProgress, outputDir, extractTextures, extractAudio);
+                            processor.UnpackAll();
+                            processor = null;
+                            GC.Collect();
+                            GC.WaitForPendingFinalizers();
+                            await Task.Delay(1000);
+                            UpdateLog("--------------------------------------------------");
+                        }
+                        else
+                        {
+                            UpdateLog("[Pipeline] Phase 1: Textures and Audio skipped (unselected).");
+                        }
 
-                    if (extractWad2)
-                    {
-                        UpdateLog("[Pipeline] Phase 2: Launching Wad2Processor for 3D assets...");
-                        var wad2Processor = new Wad2Processor(filePath, outputWad2Path, UpdateLog);
-                        wad2Processor.ExtractWad2();
-                    }
-                    else
-                    {
-                        UpdateLog("[Pipeline] Phase 2: 3D assets (Wad2) skipped (unselected).");
-                    }
+                        if (extractWad2)
+                        {
+                            UpdateLog("[Pipeline] Phase 2: Launching Wad2Processor for 3D assets...");
+                            var wad2Processor = new Wad2Processor(filePath, outputWad2Path, UpdateLog);
+                            wad2Processor.ExtractWad2();
+                        }
+                        else
+                        {
+                            UpdateLog("[Pipeline] Phase 2: 3D assets (Wad2) skipped (unselected).");
+                        }
 
-                    UpdateLog("[Pipeline] Pipeline finished successfully!");
-                    UpdateProgress(100);
-                }
-                catch (Exception ex)
+                        UpdateLog("[Pipeline] Pipeline finished successfully!");
+                        UpdateProgress(100);
+                    }
+                    catch (Exception ex)
+                    {
+                        UpdateLog($"[CRITICAL ERROR] {ex.GetType().Name}: {ex.Message}");
+                        var lines = (ex.StackTrace ?? "").Split('\n');
+                        foreach (var line in lines)
+                        {
+                            var l = line.Trim();
+                            if (!string.IsNullOrEmpty(l))
+                                UpdateLog($"[STACK] {l}");
+                        }
+                        if (ex.InnerException != null)
+                            UpdateLog($"[INNER] {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
+                    }
+                });
+
+                if (saveLog)
                 {
-                    UpdateLog($"[CRITICAL ERROR] {ex.GetType().Name}: {ex.Message}");
-                    // Full stack trace for debugging
-                    var lines = (ex.StackTrace ?? "").Split('\n');
-                    foreach (var line in lines)
+                    try
                     {
-                        var l = line.Trim();
-                        if (!string.IsNullOrEmpty(l))
-                            UpdateLog($"[STACK] {l}");
-                    }
-                    if (ex.InnerException != null)
-                        UpdateLog($"[INNER] {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
-                }
-            });
+                        string logFileName = $"{Path.GetFileNameWithoutExtension(filePath)}_log.txt";
+                        string logFilePath = Path.Combine(outputDir, logFileName);
+                        Directory.CreateDirectory(outputDir);
 
-            if (saveLog)
+                        string finalLog = TxtLog.Text + $"[{DateTime.Now:HH:mm:ss}] [Engine] Log file successfully saved to: {logFilePath}\n";
+                        File.WriteAllText(logFilePath, finalLog);
+                        Log($"[Engine] Log file successfully saved to: {logFilePath}");
+                    }
+                    catch (Exception logEx)
+                    {
+                        Log($"[Warning] Failed to save log file: {logEx.Message}");
+                    }
+                }
+            }
+            finally
             {
-                try
-                {
-                    string logFileName = $"{Path.GetFileNameWithoutExtension(filePath)}_log.txt";
-                    string logFilePath = Path.Combine(outputDir, logFileName);
-                    Directory.CreateDirectory(outputDir);
-
-                    string finalLog = TxtLog.Text + $"[{DateTime.Now:HH:mm:ss}] [Engine] Log file successfully saved to: {logFilePath}\n";
-                    File.WriteAllText(logFilePath, finalLog);
-                    Log($"[Engine] Log file successfully saved to: {logFilePath}");
-                }
-                catch (Exception logEx)
-                {
-                    Log($"[Warning] Failed to save log file: {logEx.Message}");
-                }
+                BtnExtract.IsEnabled = true;
             }
         }
 
