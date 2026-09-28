@@ -122,19 +122,16 @@ namespace Lara_Extractor
 
             byte[]? pal8 = null;
 
-            int palOffset = FindTR1Palette(file);
-            if (palOffset >= 0)
+            byte[]? tombLibPalette = null;
+            try
             {
-                pal8 = new byte[768];
-                Buffer.BlockCopy(file, palOffset, pal8, 0, 768);
-                for (int i = 0; i < 768; i++)
-                    pal8[i] = (byte)Math.Min(255, pal8[i] * 4);
-                _logger($"[TR1 Tex] Palette found at offset {palOffset}.");
+                tombLibPalette = TR1Wad2Builder.ReadPalette8FromFile(_filePath);
+                pal8 = tombLibPalette;
+                _logger("[TR1 Tex] Palette loaded from the structural TR1 parser.");
             }
-
-            if (pal8 == null)
+            catch (Exception ex)
             {
-                _logger("[TR1 Tex] Warning: Palette not found, using grayscale.");
+                _logger($"[TR1 Tex] Warning: TombLib palette read failed ({ex.Message}), using grayscale.");
                 pal8 = new byte[768];
                 for (int i = 0; i < 256; i++)
                     pal8[i * 3] = pal8[i * 3 + 1] = pal8[i * 3 + 2] = (byte)i;
@@ -211,6 +208,9 @@ namespace Lara_Extractor
 
         private static int FindTR1Palette(byte[] file)
         {
+            int bestOffset = -1;
+            int bestScore = -1; // Initialize bestScore to -1
+
             for (int i = file.Length - 768; i >= 0; i--)
             {
                 bool valid = true;
@@ -218,17 +218,22 @@ namespace Lara_Extractor
                 {
                     if (file[i + j] > 63) { valid = false; break; }
                 }
-                if (valid)
+                if (!valid) continue; // Skip if not valid
+
+                var colors = new HashSet<int>();
+                for (int j = 0; j < 768; j += 3)
                 {
-                    int nonZeroCount = 0;
-                    for (int j = 0; j < 768; j++)
-                    {
-                        if (file[i + j] > 0) nonZeroCount++;
-                    }
-                    if (nonZeroCount > 10) return i;
+                    colors.Add(file[i + j] | (file[i + j + 1] << 8) | (file[i + j + 2] << 16));
+                }
+
+                int score = colors.Count;
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestOffset = i;
                 }
             }
-            return -1;
+            return bestOffset; // Return the best offset found
         }
         private void ParseTR2TR3(BinaryReader br, bool isTR3)
         {
@@ -260,19 +265,14 @@ namespace Lara_Extractor
             }
             else
             {
-                br.BaseStream.Seek(131072L * numTiles, SeekOrigin.Current);
                 _logger($"[{label} Tex] Texture extraction skipped.");
             }
-            _progressReporter(40);
 
             if (_extractAudio)
-            {
-                _logger($"[{label} Audio] Place Main.sfx in the same directory as the level file.");
-            }
+                ExtractTR4TR5Audio(br, label);
             else
-            {
                 _logger($"[{label} Audio] Audio extraction skipped.");
-            }
+
             _progressReporter(70);
         }
 

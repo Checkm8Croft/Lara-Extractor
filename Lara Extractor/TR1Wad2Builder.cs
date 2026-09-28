@@ -257,43 +257,116 @@ namespace Lara_Extractor
 
         private byte[] ReadPalette8(BinaryReader br, long tilesStart, int numTiles)
         {
-            long savedPos = br.BaseStream.Position;
-            long fileLen  = br.BaseStream.Length;
+            return ReadPalette8FromFile(_filePath);
+        }
 
-            br.BaseStream.Position = 0;
-            byte[] file = br.ReadBytes((int)fileLen);
-            br.BaseStream.Position = savedPos;
+        public static byte[] ReadPalette8FromFile(string filePath)
+        {
+            byte[] file = File.ReadAllBytes(filePath);
+            int textureStart = 8;
+            uint numTiles = BitConverter.ToUInt32(file, 4);
+            int searchStart = checked(textureStart + (int)numTiles * 65536);
+            int bestOffset = -1;
+            int bestScore = -1;
 
-            for (int i = file.Length - 768; i >= 0; i--)
+            for (int offset = searchStart; offset <= file.Length - 768; offset++)
             {
-                bool valid = true;
-                for (int j = 0; j < 768; j++)
+                bool paletteBytes = true;
+                var colors = new HashSet<int>();
+                for (int i = 0; i < 768; i += 3)
                 {
-                    if (file[i + j] > 63)
+                    if (file[offset + i] > 63 || file[offset + i + 1] > 63 || file[offset + i + 2] > 63)
                     {
-                        valid = false;
+                        paletteBytes = false;
                         break;
                     }
+                    colors.Add(file[offset + i] | (file[offset + i + 1] << 8) | (file[offset + i + 2] << 16));
                 }
-                
-                if (valid)
+
+                if (!paletteBytes || !HasValidTR1Trailer(file, offset + 768))
+                    continue;
+
+                if (colors.Count > bestScore)
                 {
-                    int nonZeroCount = 0;
-                    for (int j = 0; j < 768; j++)
-                    {
-                        if (file[i + j] > 0) nonZeroCount++;
-                    }
-                    if (nonZeroCount > 10)
-                    {
-                        var pal = new byte[768];
-                        Buffer.BlockCopy(file, i, pal, 0, 768);
-                        for (int k = 0; k < 768; k++) pal[k] = (byte)(pal[k] * 4);
-                        return pal;
-                    }
+                    bestScore = colors.Count;
+                    bestOffset = offset;
                 }
             }
 
-            return BuildGrayscalePalette();
+            if (bestOffset < 0)
+                return BuildGrayscalePalette();
+
+            var palette = new byte[768];
+            Buffer.BlockCopy(file, bestOffset, palette, 0, palette.Length);
+            for (int i = 0; i < palette.Length; i++)
+                palette[i] = (byte)Math.Min(255, palette[i] * 4);
+            return palette;
+        }
+
+        private static bool HasValidTR1Trailer(byte[] file, int position)
+        {
+            try
+            {
+                int length = file.Length;
+                ushort cinematicFrames = BitConverter.ToUInt16(file, position);
+                if (cinematicFrames > 256) return false;
+                position += 2 + cinematicFrames * 16;
+
+                ushort demoBytes = BitConverter.ToUInt16(file, position);
+                position += 2 + demoBytes + 512;
+
+                uint soundDetails = BitConverter.ToUInt32(file, position);
+                if (soundDetails > 100000) return false;
+                position += 4 + checked((int)soundDetails * 8);
+
+                uint sampleBytes = BitConverter.ToUInt32(file, position);
+                if (sampleBytes > length) return false;
+                position += 4 + checked((int)sampleBytes);
+
+                uint sampleIndices = BitConverter.ToUInt32(file, position);
+                position += 4 + checked((int)sampleIndices * 4);
+                return position == length;
+            }
+            catch (ArgumentOutOfRangeException) { return false; }
+            catch (OverflowException) { return false; }
+        }
+
+        private static void SkipRoomsForPalette(BinaryReader reader)
+        {
+            ushort numRooms = reader.ReadUInt16();
+            for (int room = 0; room < numRooms; room++)
+            {
+                SkipBytes(reader, 16);
+                SkipWords(reader);
+                ushort numPortals = reader.ReadUInt16();
+                SkipBytes(reader, (long)numPortals * 32);
+                ushort numZ = reader.ReadUInt16();
+                ushort numX = reader.ReadUInt16();
+                SkipBytes(reader, (long)numZ * numX * 8);
+                reader.ReadInt16();
+                ushort numLights = reader.ReadUInt16();
+                SkipBytes(reader, (long)numLights * 18);
+                ushort numStatics = reader.ReadUInt16();
+                SkipBytes(reader, (long)numStatics * 18);
+                reader.ReadInt16();
+                reader.ReadInt16();
+            }
+        }
+
+        private static void SkipWords(BinaryReader reader)
+            => SkipBytes(reader, (long)reader.ReadUInt32() * 2);
+
+        private static void SkipDwords(BinaryReader reader)
+            => SkipBytes(reader, (long)reader.ReadUInt32() * 4);
+
+        private static void SkipFixedRecords(BinaryReader reader, int recordSize)
+            => SkipBytes(reader, (long)reader.ReadUInt32() * recordSize);
+
+        private static void SkipBytes(BinaryReader reader, long count)
+        {
+            if (count < 0 || count > reader.BaseStream.Length - reader.BaseStream.Position)
+                throw new InvalidDataException("Invalid TR1 block size while locating palette.");
+            reader.BaseStream.Seek(count, SeekOrigin.Current);
         }
 
         private static byte[] BuildGrayscalePalette()
