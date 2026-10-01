@@ -1,11 +1,11 @@
 ## Lara Extractor
 
-Lara Extractor is a tool for extract resources from Tomb Raider 1-5 (PC Only) and TRNG
-
+Lara Extractor is a tool for extract resources from Tomb Raider 1-5 (PC Only), TRNG and TEN
 - .phd
 - .tr2
 - .tr4
 - .trc
+- .ten (textures and audio)
 
 ## File Extraction
 
@@ -24,4 +24,4 @@ I'm working [In this repo](https://github.com/Checkm8Croft/PRJ2-Extractor) and i
 ## Credits
 
 - [Tomb Raider Chronicles](https://www.tombraiderchronicles.com/) for the Lara model used in the icon
-- [Tomb Engine team](https://github.com/TombEngine) for the .wad2 file format and TombLib
+- [Tomb Engine team](https://github.com/TombEngine) for TombLib and TombEngine code used for the program
