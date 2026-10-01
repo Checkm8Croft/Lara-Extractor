@@ -4,6 +4,8 @@
 
 [ ] I've updated the changelog with my implementations
 
+[ ] I've used AI generated code
+
 ## Content
 
 ...write your content here...
