@@ -1,0 +1,46 @@
+name: Bug report
+description: Report an issue with Lara-Extractor
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before wrting, read the coding guidelines:
+        https://github.com/Checkm8Croft/Lara-Extractor/blob/master/CODE_OF_CONDUCT.md
+
+  - type: dropdown
+    id: level_type
+    attributes:
+      label: Tomb Raider Level
+      description: Where do you encounted this issue?
+      options:
+        - Audio
+        - Textures
+        - Wad2
+    validations:
+      required: true
+
+  - type: dropdown
+    id: game
+    attributes:
+      label: Game
+      options:
+        - All games
+        - TR1
+        - TR2
+        - TR3
+        - TR4
+        - TR5
+        - TRNG
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: Describe the issue clearly, so we can reproduce it goodly
+      placeholder: |
+        I've selected a TR2 level and the textures have mismatched colors.
+        (eventually screenshots)
+    validations:
+      required: true
