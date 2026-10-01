@@ -25,3 +25,4 @@ I'm working [In this repo](https://github.com/Checkm8Croft/PRJ2-Extractor) and i
 
 - [Tomb Raider Chronicles](https://www.tombraiderchronicles.com/) for the Lara model used in the icon
 - [Tomb Engine team](https://github.com/TombEngine) for the .wad2 file format and TombLib
+- [TRNG-CE](https://github.com/TombNextGeneration/TRNGCommunityEdition) for TRNG
