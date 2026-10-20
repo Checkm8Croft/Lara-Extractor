@@ -36,6 +36,13 @@ namespace Lara_Extractor
             }
 
             var fi = new FileInfo(_inputLevelPath);
+            if (Path.GetExtension(_inputLevelPath).Equals(".ten", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger("[Wad2] TEN level detected. Delegating to TENWad2Processor...");
+                new TENWad2Processor(_inputLevelPath, _outputWad2Path, _logger).ExtractWad2();
+                return;
+            }
+
             byte[] header = new byte[4];
             using (var fs = File.OpenRead(_inputLevelPath))
                 _ = fs.Read(header, 0, 4);
