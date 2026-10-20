@@ -6,7 +6,7 @@ using System.Windows.Media.Imaging;
 
 namespace Lara_Extractor
 {
-    public sealed class TENAssetProcessor
+    public sealed partial class TENAssetProcessor
     {
         private readonly string _filePath;
         private readonly Action<string> _logger;
@@ -34,9 +34,17 @@ namespace Lara_Extractor
             byte[] media = ReadCompressedBlock(reader, "media");
             _logger($"[TEN] Media block decompressed: {media.Length:N0} bytes.");
 
+            // The geometry block follows the media block; it is only needed to find which atlas areas the rooms use.
+            byte[]? geometry = _extractTextures ? ReadCompressedBlock(reader, "geometry") : null;
+
             using var mediaStream = new MemoryStream(media, writable: false);
             using var mediaReader = new BinaryReader(mediaStream);
-            if (_extractTextures) ExtractTextures(mediaReader);
+            if (_extractTextures)
+            {
+                ExtractTextures(mediaReader);
+                try { ExtractLevelTextures(geometry!); }
+                catch (Exception ex) { _logger($"[TEN Level Tex Error] {ex.GetType().Name}: {ex.Message}"); }
+            }
             else _logger("[TEN Tex] Texture extraction skipped.");
             _progressReporter(50);
             if (_extractAudio) ExtractAudio(mediaReader);
@@ -104,6 +112,18 @@ namespace Lara_Extractor
                     int width = reader.ReadInt32();
                     int height = reader.ReadInt32();
                     byte[] colorMap = ReadBlob(reader);
+                    if (atlasGroup == 0 || atlasGroup == 3)
+                        _levelAtlases[(atlasGroup, i)] = (width, height, colorMap);
+
+                    // Moveable and static atlases belong to the game assets, not to the level: skip them.
+                    if (atlasGroup == 1 || atlasGroup == 2)
+                    {
+                        for (int extra = 0; extra < 3; extra++)
+                            if (reader.ReadBoolean())
+                                ReadBlob(reader);
+                        continue;
+                    }
+
                     string baseName = $"{groupPrefixes[atlasGroup]}_{i:D3}";
 
                     try
@@ -168,16 +188,7 @@ namespace Lara_Extractor
             {
                 int width = reader.ReadInt32();
                 int height = reader.ReadInt32();
-                byte[] spriteBlob = ReadBlob(reader);
-                try
-                {
-                    SaveTexture(Path.Combine(textureDir, $"Sprite_{i:D3}"), spriteBlob, width, height);
-                    exportedCount++;
-                }
-                catch (Exception ex)
-                {
-                    _logger($"[TEN Tex Warning] Sprite {i} ({width}x{height}): {ex.Message}");
-                }
+                ReadBlob(reader); // sprite atlases are game assets, not level textures
             }
 
             int skyWidth = reader.ReadInt32();

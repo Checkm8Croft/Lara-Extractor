@@ -948,7 +948,7 @@ namespace Lara_Extractor
         }
 
         /// <summary>Decodes a PNG or BC1/BC3 DDS blob (as written by the TEN compiler) to BGRA32.</summary>
-        private static byte[]? DecodeToBgra(byte[] blob, int expectedW, int expectedH, out int width, out int height)
+        internal static byte[]? DecodeToBgra(byte[] blob, int expectedW, int expectedH, out int width, out int height)
         {
             width = expectedW;
             height = expectedH;
