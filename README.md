@@ -5,7 +5,7 @@ Lara Extractor is a tool for extract resources from Tomb Raider 1-5 (PC Only), T
 - .tr2
 - .tr4
 - .trc
-- .ten (textures and audio)
+- .ten
 
 ## File Extraction
 
