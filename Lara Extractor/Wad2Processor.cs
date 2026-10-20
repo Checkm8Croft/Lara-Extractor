@@ -38,7 +38,8 @@ namespace Lara_Extractor
             var fi = new FileInfo(_inputLevelPath);
             if (Path.GetExtension(_inputLevelPath).Equals(".ten", StringComparison.OrdinalIgnoreCase))
             {
-                _logger("[Wad2] TEN level detected. Wad2 extraction is not implemented yet; media extraction was handled in Phase 1.");
+                _logger("[Wad2] TEN level detected. Delegating to TENWad2Processor...");
+                new TENWad2Processor(_inputLevelPath, _outputWad2Path, _logger).ExtractWad2();
                 return;
             }
 

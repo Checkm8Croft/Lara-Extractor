@@ -1,6 +1,8 @@
-using K4os.Compression.LZ4;
+﻿using K4os.Compression.LZ4;
 using System;
 using System.IO;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 namespace Lara_Extractor
 {
@@ -51,7 +53,7 @@ namespace Lara_Extractor
             reader.ReadInt32();
         }
 
-        private static byte[] ReadCompressedBlock(BinaryReader reader, string name)
+        internal static byte[] ReadCompressedBlock(BinaryReader reader, string name)
         {
             long uncompressedSize = reader.ReadInt64();
             long compressedSize = reader.ReadInt64();
@@ -90,7 +92,10 @@ namespace Lara_Extractor
         {
             string textureDir = Path.Combine(_outputDir, "Textures");
             Directory.CreateDirectory(textureDir);
-            int atlasCount = 0;
+
+            string[] groupPrefixes = { "Room_Tile", "Moveable_Tile", "Static_Tile", "Animated_Tile" };
+            int exportedCount = 0;
+
             for (int atlasGroup = 0; atlasGroup < 4; atlasGroup++)
             {
                 int count = ReadCount(reader, 4096);
@@ -99,17 +104,61 @@ namespace Lara_Extractor
                     int width = reader.ReadInt32();
                     int height = reader.ReadInt32();
                     byte[] colorMap = ReadBlob(reader);
-                    SkipOptionalMap(reader);
-                    SkipOptionalMap(reader);
-                    SkipOptionalMap(reader);
+                    string baseName = $"{groupPrefixes[atlasGroup]}_{i:D3}";
+
                     try
                     {
-                        WriteDdsAsTga(Path.Combine(textureDir, $"Tile_{atlasCount:D3}.tga"), colorMap);
-                        atlasCount++;
+                        SaveTexture(Path.Combine(textureDir, baseName), colorMap, width, height);
+                        exportedCount++;
                     }
                     catch (Exception ex)
                     {
-                        _logger($"[TEN Tex Warning] Atlas {atlasGroup}/{i} ({width}x{height}): {ex.Message}");
+                        _logger($"[TEN Tex Warning] {baseName} ({width}x{height}): {ex.Message}");
+                    }
+
+                    // Optional NormalMap
+                    if (reader.ReadBoolean())
+                    {
+                        byte[] normalMap = ReadBlob(reader);
+                        try
+                        {
+                            SaveTexture(Path.Combine(textureDir, $"{baseName}_Normal"), normalMap, width, height);
+                            exportedCount++;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger($"[TEN Tex Warning] {baseName}_Normal ({width}x{height}): {ex.Message}");
+                        }
+                    }
+
+                    // Optional ORSHMap
+                    if (reader.ReadBoolean())
+                    {
+                        byte[] orshMap = ReadBlob(reader);
+                        try
+                        {
+                            SaveTexture(Path.Combine(textureDir, $"{baseName}_ORSH"), orshMap, width, height);
+                            exportedCount++;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger($"[TEN Tex Warning] {baseName}_ORSH ({width}x{height}): {ex.Message}");
+                        }
+                    }
+
+                    // Optional EmissiveMap
+                    if (reader.ReadBoolean())
+                    {
+                        byte[] emissiveMap = ReadBlob(reader);
+                        try
+                        {
+                            SaveTexture(Path.Combine(textureDir, $"{baseName}_Emissive"), emissiveMap, width, height);
+                            exportedCount++;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger($"[TEN Tex Warning] {baseName}_Emissive ({width}x{height}): {ex.Message}");
+                        }
                     }
                 }
             }
@@ -119,15 +168,32 @@ namespace Lara_Extractor
             {
                 int width = reader.ReadInt32();
                 int height = reader.ReadInt32();
-                try { WriteDdsAsTga(Path.Combine(textureDir, $"Sprite_{i:D3}.tga"), ReadBlob(reader)); }
-                catch (Exception ex) { _logger($"[TEN Tex Warning] Sprite {i} ({width}x{height}): {ex.Message}"); }
+                byte[] spriteBlob = ReadBlob(reader);
+                try
+                {
+                    SaveTexture(Path.Combine(textureDir, $"Sprite_{i:D3}"), spriteBlob, width, height);
+                    exportedCount++;
+                }
+                catch (Exception ex)
+                {
+                    _logger($"[TEN Tex Warning] Sprite {i} ({width}x{height}): {ex.Message}");
+                }
             }
 
             int skyWidth = reader.ReadInt32();
             int skyHeight = reader.ReadInt32();
-            try { WriteDdsAsTga(Path.Combine(textureDir, "Sky.tga"), ReadBlob(reader)); }
-            catch (Exception ex) { _logger($"[TEN Tex Warning] Sky ({skyWidth}x{skyHeight}): {ex.Message}"); }
-            _logger($"[TEN Tex] {atlasCount} DDS atlas texture(s) exported as TGA.");
+            byte[] skyBlob = ReadBlob(reader);
+            try
+            {
+                SaveTexture(Path.Combine(textureDir, "Sky"), skyBlob, skyWidth, skyHeight);
+                exportedCount++;
+            }
+            catch (Exception ex)
+            {
+                _logger($"[TEN Tex Warning] Sky ({skyWidth}x{skyHeight}): {ex.Message}");
+            }
+
+            _logger($"[TEN Tex] {exportedCount} texture(s) successfully extracted.");
         }
 
         private void ExtractAudio(BinaryReader reader)
@@ -170,23 +236,78 @@ namespace Lara_Extractor
             return data;
         }
 
-        private static void SkipOptionalMap(BinaryReader reader)
+        private static void SaveTexture(string basePathNoExt, byte[] data, int expectedWidth, int expectedHeight)
         {
-            if (reader.ReadBoolean()) _ = ReadBlob(reader);
+            if (data == null || data.Length == 0) return;
+
+            // 1. Raw PNG format (\x89PNG)
+            if (data.Length >= 8 && data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47)
+            {
+                File.WriteAllBytes(basePathNoExt + ".png", data);
+                return;
+            }
+
+            // 2. DDS format (DDS )
+            if (data.Length >= 128 && data[0] == 'D' && data[1] == 'D' && data[2] == 'S' && data[3] == ' ')
+            {
+                int height = BitConverter.ToInt32(data, 12);
+                int width = BitConverter.ToInt32(data, 16);
+                int fourCc = BitConverter.ToInt32(data, 84);
+
+                if (width <= 0) width = expectedWidth;
+                if (height <= 0) height = expectedHeight;
+
+                byte[]? bgraPixels = null;
+                if (fourCc == 0x35545844) // DXT5 / BC3
+                {
+                    bgraPixels = DecodeDxt5(data, width, height);
+                }
+                else if (fourCc == 0x31545844) // DXT1 / BC1
+                {
+                    bgraPixels = DecodeDxt1(data, width, height);
+                }
+                else if (fourCc == 0x32495441) // ATI2 / BC5 (Normal Map)
+                {
+                    bgraPixels = DecodeBc5(data, width, height);
+                }
+
+                if (bgraPixels != null)
+                {
+                    SaveBgraAsPng(basePathNoExt + ".png", bgraPixels, width, height);
+                }
+                else
+                {
+                    // Fallback to saving raw .dds file
+                    File.WriteAllBytes(basePathNoExt + ".dds", data);
+                }
+                return;
+            }
+
+            // Fallback: save raw binary
+            File.WriteAllBytes(basePathNoExt + ".bin", data);
         }
 
-        private static void WriteDdsAsTga(string path, byte[] ddsData)
+        private static void SaveBgraAsPng(string path, byte[] pixels, int width, int height)
         {
-            if (ddsData.Length < 128 || ddsData[0] != 'D' || ddsData[1] != 'D' || ddsData[2] != 'S' || ddsData[3] != ' ')
-                throw new InvalidDataException("TEN texture is not a DDS image.");
+            try
+            {
+                var bitmap = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32, null, pixels, width * 4);
+                bitmap.Freeze();
+                using var stream = File.Create(path);
+                var encoder = new PngBitmapEncoder();
+                encoder.Frames.Add(BitmapFrame.Create(bitmap));
+                encoder.Save(stream);
+            }
+            catch
+            {
+                // Fallback to uncompressed TGA if PNG encoding encounters an issue
+                string tgaPath = Path.ChangeExtension(path, ".tga");
+                WriteBgraAsTga(tgaPath, pixels, width, height);
+            }
+        }
 
-            int height = BitConverter.ToInt32(ddsData, 12);
-            int width = BitConverter.ToInt32(ddsData, 16);
-            int fourCc = BitConverter.ToInt32(ddsData, 84);
-            if (width <= 0 || height <= 0 || fourCc != 0x35545844) // DXT5 / BC3
-                throw new InvalidDataException("TEN texture is not a BC3/DXT5 image.");
-
-            byte[] pixels = DecodeDxt5(ddsData, width, height);
+        private static void WriteBgraAsTga(string path, byte[] pixels, int width, int height)
+        {
             using var writer = new BinaryWriter(File.Open(path, FileMode.Create));
             writer.Write((byte)0); writer.Write((byte)0); writer.Write((byte)2);
             writer.Write((ushort)0); writer.Write((ushort)0); writer.Write((byte)0);
@@ -196,19 +317,18 @@ namespace Lara_Extractor
             writer.Write(pixels);
         }
 
-        private static byte[] DecodeDxt5(byte[] dds, int width, int height)
+        internal static byte[] DecodeDxt5(byte[] dds, int width, int height)
         {
             int blocksWide = (width + 3) / 4;
             int blocksHigh = (height + 3) / 4;
-            int expected = checked(128 + blocksWide * blocksHigh * 16);
-            if (dds.Length < expected)
-                throw new InvalidDataException("TEN BC3 texture data is truncated.");
-
             byte[] pixels = new byte[width * height * 4];
             int source = 128;
+
             for (int blockY = 0; blockY < blocksHigh; blockY++)
             for (int blockX = 0; blockX < blocksWide; blockX++)
             {
+                if (source + 16 > dds.Length) break;
+
                 byte alpha0 = dds[source];
                 byte alpha1 = dds[source + 1];
                 ulong alphaBits = 0;
@@ -236,6 +356,97 @@ namespace Lara_Extractor
                     pixels[destination + 1] = colors[colorIndex].g;
                     pixels[destination + 2] = colors[colorIndex].r;
                     pixels[destination + 3] = alpha;
+                }
+
+                source += 16;
+            }
+
+            return pixels;
+        }
+
+        internal static byte[] DecodeDxt1(byte[] dds, int width, int height)
+        {
+            int blocksWide = (width + 3) / 4;
+            int blocksHigh = (height + 3) / 4;
+            byte[] pixels = new byte[width * height * 4];
+            int source = 128;
+
+            for (int blockY = 0; blockY < blocksHigh; blockY++)
+            for (int blockX = 0; blockX < blocksWide; blockX++)
+            {
+                if (source + 8 > dds.Length) break;
+
+                ushort color0 = BitConverter.ToUInt16(dds, source);
+                ushort color1 = BitConverter.ToUInt16(dds, source + 2);
+                uint colorBits = BitConverter.ToUInt32(dds, source + 4);
+                var colors = BuildDxtColors(color0, color1);
+
+                for (int localY = 0; localY < 4; localY++)
+                for (int localX = 0; localX < 4; localX++)
+                {
+                    int x = blockX * 4 + localX;
+                    int y = blockY * 4 + localY;
+                    if (x >= width || y >= height) continue;
+
+                    int pixel = localY * 4 + localX;
+                    int colorIndex = (int)((colorBits >> (2 * pixel)) & 3);
+                    byte alpha = (color0 <= color1 && colorIndex == 3) ? (byte)0 : (byte)255;
+                    int destination = (y * width + x) * 4;
+                    pixels[destination] = colors[colorIndex].b;
+                    pixels[destination + 1] = colors[colorIndex].g;
+                    pixels[destination + 2] = colors[colorIndex].r;
+                    pixels[destination + 3] = alpha;
+                }
+
+                source += 8;
+            }
+
+            return pixels;
+        }
+
+        private static byte[] DecodeBc5(byte[] dds, int width, int height)
+        {
+            int blocksWide = (width + 3) / 4;
+            int blocksHigh = (height + 3) / 4;
+            byte[] pixels = new byte[width * height * 4];
+            int source = 128;
+
+            for (int blockY = 0; blockY < blocksHigh; blockY++)
+            for (int blockX = 0; blockX < blocksWide; blockX++)
+            {
+                if (source + 16 > dds.Length) break;
+
+                byte r0 = dds[source];
+                byte r1 = dds[source + 1];
+                ulong rBits = 0;
+                for (int i = 0; i < 6; i++) rBits |= (ulong)dds[source + 2 + i] << (8 * i);
+
+                byte g0 = dds[source + 8];
+                byte g1 = dds[source + 9];
+                ulong gBits = 0;
+                for (int i = 0; i < 6; i++) gBits |= (ulong)dds[source + 10 + i] << (8 * i);
+
+                for (int localY = 0; localY < 4; localY++)
+                for (int localX = 0; localX < 4; localX++)
+                {
+                    int x = blockX * 4 + localX;
+                    int y = blockY * 4 + localY;
+                    if (x >= width || y >= height) continue;
+
+                    int pixel = localY * 4 + localX;
+                    byte r = GetDxtAlpha(r0, r1, (int)((rBits >> (3 * pixel)) & 7));
+                    byte g = GetDxtAlpha(g0, g1, (int)((gBits >> (3 * pixel)) & 7));
+
+                    float normX = (r / 255.0f) * 2.0f - 1.0f;
+                    float normY = (g / 255.0f) * 2.0f - 1.0f;
+                    float normZ = MathF.Sqrt(MathF.Max(0f, 1.0f - normX * normX - normY * normY));
+                    byte b = (byte)Math.Clamp((int)((normZ * 0.5f + 0.5f) * 255.0f), 0, 255);
+
+                    int destination = (y * width + x) * 4;
+                    pixels[destination] = b;
+                    pixels[destination + 1] = g;
+                    pixels[destination + 2] = r;
+                    pixels[destination + 3] = 255;
                 }
 
                 source += 16;
