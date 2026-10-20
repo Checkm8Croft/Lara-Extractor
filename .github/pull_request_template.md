@@ -1,0 +1,16 @@
+## Checklist
+
+- [ ] I've read the [Coding Guidelines](https://github.com/Checkm8Croft/Lara-Extractor/blob/textures/CODE_OF_CONDUCT.md)
+
+- [ ] I've updated the changelog with my implementations
+
+- [ ] I've used AI generated code
+
+## Content
+
+...write your content here...
+
+
+## Screenshots
+
+optional
