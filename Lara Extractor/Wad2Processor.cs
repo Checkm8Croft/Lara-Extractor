@@ -35,6 +35,13 @@ namespace Lara_Extractor
                 return;
             }
 
+            if (PSXAssetExtractor.IsPsxContainerName(_inputLevelPath))
+            {
+                _logger("[Wad2] PlayStation GAMEWAD container detected. Delegating to TR4PSXWad2Processor...");
+                new TR4PSXWad2Processor(_inputLevelPath, _outputWad2Path, _logger).ExtractWad2();
+                return;
+            }
+
             var fi = new FileInfo(_inputLevelPath);
             byte[] header = new byte[4];
             using (var fs = File.OpenRead(_inputLevelPath))
