@@ -18,7 +18,7 @@ namespace Lara_Extractor
             return name.StartsWith("GAMEWAD", StringComparison.OrdinalIgnoreCase) || ext == ".obj";
         }
 
-        public static void Extract(string path, string outputDir, bool extractTextures, Action<string> log, Action<double> progress)
+        public static void Extract(string path, string outputDir, bool extractTextures, bool extractAudio, Action<string> log, Action<double> progress)
         {
             var gamewad = PSXGamewad.TryOpen(path);
             if (gamewad == null)
@@ -39,16 +39,27 @@ namespace Lara_Extractor
             }
 
             log($"[PSX] {levels.Count} level(s) found.");
-            if (!extractTextures)
+            if (!extractTextures && !extractAudio)
             {
-                log("[PSX] Texture extraction disabled; nothing to do.");
+                log("[PSX] Texture and audio extraction disabled; nothing to do.");
                 return;
             }
 
             int done = 0;
             int totalFiles = 0;
+            int totalSounds = 0;
             foreach (var (entry, level) in levels)
             {
+                if (extractAudio)
+                    totalSounds += ExtractSounds(level, entry.Index, outputDir, log);
+
+                if (!extractTextures)
+                {
+                    done++;
+                    progress(done * 100.0 / levels.Count);
+                    continue;
+                }
+
                 string levelDir = Path.Combine(outputDir, $"Level_{entry.Index:D2}", "Textures");
                 Directory.CreateDirectory(levelDir);
 
@@ -75,7 +86,36 @@ namespace Lara_Extractor
                 log($"[PSX Tex] Level {entry.Index:D2}: {saved} unique room texture(s) from {level.RoomTextures.Count} entries, {level.NumRooms} rooms.");
             }
 
-            log($"[PSX Tex] {totalFiles} texture(s) saved in {levels.Count} level folder(s).");
+            if (extractTextures)
+                log($"[PSX Tex] {totalFiles} texture(s) saved in {levels.Count} level folder(s).");
+            if (extractAudio)
+                log($"[PSX Audio] {totalSounds} sound(s) saved as 11025 Hz mono WAV.");
+        }
+
+        private static int ExtractSounds(PSXLevel level, int levelIndex, string outputDir, Action<string> log)
+        {
+            if (!level.TryReadSounds(out byte[] bank, out var samples))
+            {
+                log($"[PSX Audio Warning] Level {levelIndex:D2}: no valid sound bank.");
+                return 0;
+            }
+
+            string dir = Path.Combine(outputDir, $"Level_{levelIndex:D2}", "Sounds");
+            Directory.CreateDirectory(dir);
+
+            int saved = 0;
+            for (int i = 0; i < samples.Count; i++)
+            {
+                var (start, length) = samples[i];
+                if (length < PSXAdpcm.BlockSize) continue;
+
+                short[] pcm = PSXAdpcm.Decode(bank, start, length);
+                PSXAdpcm.WriteWav(Path.Combine(dir, $"Sound_{i:D3}.wav"), pcm, PSXAdpcm.DefaultSampleRate);
+                saved++;
+            }
+
+            log($"[PSX Audio] Level {levelIndex:D2}: {saved} sound(s).");
+            return saved;
         }
 
         private static string Hash(int w, int h, byte[] bgra)

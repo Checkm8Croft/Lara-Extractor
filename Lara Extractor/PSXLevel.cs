@@ -154,6 +154,45 @@ namespace Lara_Extractor
                 RoomTextures.Add(ReadTexture((int)mmTextureOffset + i * TextureSize));
         }
 
+        /// <summary>
+        /// Sound effects: at offsetSoundPointers there are numSoundEffects int32 offsets into the sound bank, which is
+        /// soundWadLength bytes of raw SPU-ADPCM at offsetSoundData (see LoadLevel() and LoadSoundEffects() in TOMB5).
+        /// Returns the bank plus the (start, length) of every sample.
+        /// </summary>
+        public bool TryReadSounds(out byte[] bank, out List<(int Start, int Length)> samples)
+        {
+            bank = Array.Empty<byte>();
+            samples = new List<(int, int)>();
+
+            int pointers = I32(0x04);
+            int soundData = I32(0x08);
+            int count = I32(0x24);
+            int length = I32(0x28);
+
+            if (count <= 0 || count > 4096 || length <= 0 || length > 0x80000 ||
+                (long)Base + pointers + count * 4L > _data.Length || (long)Base + soundData + length > _data.Length)
+                return false;
+
+            bank = new byte[length];
+            Buffer.BlockCopy(_data, Base + soundData, bank, 0, length);
+
+            var starts = new int[count];
+            for (int i = 0; i < count; i++)
+            {
+                starts[i] = BitConverter.ToInt32(_data, Base + pointers + i * 4);
+                if (starts[i] < 0 || starts[i] % PSXAdpcm.BlockSize != 0 || starts[i] >= length)
+                    return false;
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                int limit = (i + 1 < count && starts[i + 1] > starts[i]) ? starts[i + 1] : length;
+                samples.Add((starts[i], PSXAdpcm.FindSampleLength(bank, starts[i], limit)));
+            }
+
+            return true;
+        }
+
         private Texture ReadTexture(int offset)
         {
             // u0 v0 clut(2) | u1 v1 tpage(2) | u2 v2 pad(2) | u3 v3 pad(2)
