@@ -22,6 +22,33 @@ namespace Lara_Extractor
         private const int OutsideRoomOffsetsSize = 1460;
         private const int TextureSize = 16;
         private const int MMTextureSize = 3 * TextureSize;
+        private const int AnimSize = 40;
+        public const int ObjectInfoSize = 64;
+        public const int StaticInfoSize = 28;
+        public const int NumObjects = 465;       // TR4 PlayStation object table size (verified on the TR4 GAMEWAD)
+        public const int NumStaticObjects = 60;   // static ids 10-55 hold data in the TR4 GAMEWAD; entries from 60 on are not static data
+
+        // Absolute offsets inside the entry data (filled by ReadHeaderAndTables).
+        public int MeshBaseOffset { get; private set; }
+        public int MeshPointerOffset { get; private set; }
+        public int MeshPointerCount { get; private set; }
+        public int AnimOffset { get; private set; }
+        public int AnimCount { get; private set; }
+        public int ChangeOffset { get; private set; }
+        public int ChangeCount { get; private set; }
+        public int DispatchOffset { get; private set; }
+        public int DispatchCount { get; private set; }
+        public int CommandOffset { get; private set; }
+        public int CommandCount { get; private set; }
+        public int BoneOffset { get; private set; }
+        public int BoneIntCount { get; private set; }
+        public int FrameDataOffset { get; private set; }
+        public int FrameDataLength { get; private set; }
+        public int ObjectTableOffset { get; private set; }
+        public int SpriteInfoOffset { get; private set; }
+        public int SpriteInfoCount { get; private set; }
+
+        public byte[] Data => _data;
 
         /// <summary>One entry of psxtextinfo, or one of the three textures of an MMTEXTURE (room textures).</summary>
         public readonly record struct Texture(byte[] U, byte[] V, ushort Clut, ushort Tpage)
@@ -38,6 +65,7 @@ namespace Lara_Extractor
         public int NumRooms { get; private set; }
         public int ClutStartY { get; private set; }
         public int NumLevelItems { get; private set; }
+        public int MeshBaseLength { get; private set; }
 
         public List<Texture> ObjectTextures { get; } = new();
         /// <summary>Room textures: three textures per MMTEXTURE, in file order (t[0], t[1], t[2] of entry 0, then entry 1, ...).</summary>
@@ -138,8 +166,23 @@ namespace Lara_Extractor
             cursor += floorDataLength;
             cursor += OutsideRoomOffsetsSize + outsideRoomTableLength;
             cursor += roomBoundingBoxesLength;
-            cursor += meshBaseLength + meshesLength + animsLength + changesLength + rangesLength + commandsLength + bonesLength;
+
+            // Model data sections, in file order (see LoadLevel() in TOMB5): mesh data, mesh pointer table, anims,
+            // state changes, dispatches, anim commands, bones. Offsets here are absolute positions in the entry.
+            MeshBaseOffset = (int)cursor; MeshBaseLength = meshBaseLength; cursor += meshBaseLength;
+            MeshPointerOffset = (int)cursor; MeshPointerCount = meshesLength / 4; cursor += meshesLength;
+            AnimOffset = (int)cursor; AnimCount = animsLength / AnimSize; cursor += animsLength;
+            ChangeOffset = (int)cursor; ChangeCount = changesLength / 6; cursor += changesLength;
+            DispatchOffset = (int)cursor; DispatchCount = rangesLength / 8; cursor += rangesLength;
+            CommandOffset = (int)cursor; CommandCount = commandsLength / 2; cursor += commandsLength;
+            BoneOffset = (int)cursor; BoneIntCount = bonesLength / 4; cursor += bonesLength;
             cursor += animTextureRangesLength;
+
+            FrameDataOffset = Base + I32(0x10);
+            FrameDataLength = I32(0x68);
+            ObjectTableOffset = Base + I32(0x18);
+            SpriteInfoOffset = (int)(cursor + textureInfoLength);
+            SpriteInfoCount = I32(0x70) / 16;
 
             long textureInfoOffset = cursor;
             long mmTextureOffset = textureInfoOffset + textureInfoLength + I32(0x70) /* spriteInfoLength */;
@@ -232,14 +275,13 @@ namespace Lara_Extractor
         }
 
         /// <summary>Renders a texture to BGRA32 using its tpage/CLUT. Returns false if the rectangle is degenerate.</summary>
-        public bool TryRender(Texture t, out int width, out int height, out byte[] bgra)
+        /// <summary>Bounding rectangle (inclusive pixel coordinates inside the tpage) covered by the texture corners.</summary>
+        public static (int U0, int V0, int U1, int V1) GetRect(Texture t, bool? triangle = null)
         {
-            width = height = 0;
-            bgra = Array.Empty<byte>();
-
-            // A triangle leaves the fourth corner at (0,0); ignore it unless it is a real corner.
-            bool ignoreFourth = t.U[3] == 0 && t.V[3] == 0 && (t.U[0] | t.V[0] | t.U[1] | t.V[1] | t.U[2] | t.V[2]) != 0
-                                && Math.Min(Math.Min(t.U[0], t.U[1]), t.U[2]) > 0;
+            // A triangle leaves the fourth corner at (0,0); when the caller does not know the shape, ignore it
+            // unless it is a real corner.
+            bool ignoreFourth = triangle ?? (t.U[3] == 0 && t.V[3] == 0 && (t.U[0] | t.V[0] | t.U[1] | t.V[1] | t.U[2] | t.V[2]) != 0
+                                && Math.Min(Math.Min(t.U[0], t.U[1]), t.U[2]) > 0);
             int count = ignoreFourth ? 3 : 4;
 
             int u0 = 255, u1 = 0, v0 = 255, v1 = 0;
@@ -248,6 +290,15 @@ namespace Lara_Extractor
                 u0 = Math.Min(u0, t.U[i]); u1 = Math.Max(u1, t.U[i]);
                 v0 = Math.Min(v0, t.V[i]); v1 = Math.Max(v1, t.V[i]);
             }
+            return (u0, v0, u1, v1);
+        }
+
+        public bool TryRender(Texture t, out int width, out int height, out byte[] bgra, bool? triangle = null)
+        {
+            width = height = 0;
+            bgra = Array.Empty<byte>();
+
+            var (u0, v0, u1, v1) = GetRect(t, triangle);
 
             width = u1 - u0 + 1;
             height = v1 - v0 + 1;
