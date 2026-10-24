@@ -36,6 +36,13 @@ namespace Lara_Extractor
             }
             Directory.CreateDirectory(_outputDir);
 
+            if (PSXAssetExtractor.IsPsxContainerName(_filePath))
+            {
+                _logger("[Engine] PlayStation GAMEWAD container detected.");
+                PSXAssetExtractor.Extract(_filePath, _outputDir, _extractTextures, _extractAudio, _logger, _progressReporter);
+                _progressReporter(100);
+            }
+          
             if (Path.GetExtension(_filePath).Equals(".ten", StringComparison.OrdinalIgnoreCase))
             {
                 new TENAssetProcessor(_filePath, _logger, _progressReporter, _outputDir,
