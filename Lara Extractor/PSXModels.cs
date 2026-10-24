@@ -122,6 +122,11 @@ namespace Lara_Extractor
                 mesh.Flags = (int)((header >> 8) & 0xFF);
                 mesh.PreLit = (mesh.Flags & 0x80) != 0;
                 int polyOffset = (int)(header >> 16);
+
+                // Some meshes have 0 in the vertex-count byte: the count is then implied by the polygon offset
+                // (vertices take 8 bytes when pre-lit, 16 bytes with normals). Verified on 468/468 such meshes of a TR4 GAMEWAD.
+                if (vertexCount == 0)
+                    vertexCount = mesh.PreLit ? polyOffset / 8 : polyOffset / 16;
                 if (vertexCount == 0) return null;
 
                 int vertexStart = m + 12;
