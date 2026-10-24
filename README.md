@@ -1,11 +1,14 @@
 ## Lara Extractor
 
-Lara Extractor is a tool for extract resources from Tomb Raider 1-5 (PC Only) and TRNG
+Lara Extractor is a tool for extract resources from Tomb Raider 1-5 (PC, plus PlayStation for TR4 and TR5) and TRNG
 
-- .phd
-- .tr2
-- .tr4
-- .trc
+The program is Vibe-Coded, so sorry for bad quality code
+
+- .phd (TR1)
+- .tr2 (TR2/3)
+- .tr4 (TR4 and TRNG)
+- .trc (TR5)
+- GAMEWAD.OBJ (TR4 and TR5 for PlayStation)
 
 ## File Extraction
 
@@ -14,6 +17,21 @@ These are the files that the program will extract:
 - .wad2 (Level Objects, Movables and Statics)
 - Textures in .tga format
 - Sounds in .wav format (On TR2/3 you'll have to have the main.sfx file on the same directory)
+
+## PlayStation (PSX) support
+
+TR4 and TR5 (Chronicles) PlayStation levels are read from `GAMEWAD.OBJ`, the file that contains all the levels of the disc.
+For every level in it, the program extracts:
+
+- Textures of the level rooms in .tga format (one folder per level)
+- Sounds in .wav format (11025 Hz, mono)
+- .wad2 files, one per level (Moveables with bones and animations, Statics and Sprites)
+
+### Known limitations of the PSX .wad2
+
+- **Lara, her weapons and the other resident meshes are missing.** In the level files their mesh pointers are empty and I could not find the meshes in any file of the disc. The Moveables that use them are skipped (Lara) or have empty meshes on the missing bones (weapons and similar objects); animations are there
+- Texture animations, polygon blend flags and the sound pitch are not converted
+- The names of the levels are not known, so files are named by their position inside `GAMEWAD.OBJ` (for example `Level_03`)
 
 ### Why no .prj2?
 
