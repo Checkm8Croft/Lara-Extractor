@@ -103,6 +103,19 @@ namespace Lara_Extractor
 
         public static bool IsTr3(byte[] data) => data.Length > 16 && BitConverter.ToInt32(data, 0) == unchecked((int)0xFFFFFFC8);
 
+        /// <summary>TR1 PSX version 32: an embedded VAB sound bank first, or the textiles directly when the sounds are external.</summary>
+        private bool IsTr1()
+        {
+            if (Data.Length < 0x70010) return false;
+            if (BitConverter.ToUInt32(Data, 0) != 0 && Data[4] == (byte)'p' && Data[5] == (byte)'B' && Data[6] == (byte)'A' && Data[7] == (byte)'V')
+            {
+                long textileStart = (long)BitConverter.ToUInt32(Data, 16) + 8;
+                long versionPos = textileStart + 13L * TextileSize + 1024L * ClutSize;
+                return versionPos + 4 <= Data.Length && BitConverter.ToInt32(Data, (int)versionPos) == 32;
+            }
+            return BitConverter.ToInt32(Data, 13 * TextileSize + 1024 * ClutSize) == 32;
+        }
+
         /// <summary>TR2 PSX files start with the sound data and have the version (45) right after it.</summary>
         private bool IsTr2()
         {
@@ -130,9 +143,10 @@ namespace Lara_Extractor
             {
                 if (IsTr3(data)) level.ParseTr3();
                 else if (level.IsTr2()) level.ParseTr2();
+                else if (level.IsTr1()) level.ParseTr1();
                 else
                 {
-                    error = "unsupported or unrecognized PSX level version (supported: TR2 version 45 and TR3)";
+                    error = "unsupported or unrecognized PSX level version (supported: TR1 version 32, TR2 version 45 and TR3)";
                     return null;
                 }
                 return level;
@@ -374,6 +388,252 @@ namespace Lara_Extractor
             }
         }
 
+        /// <summary>
+        /// TR1 PSX, version 32 (layout from trview, Level_tr1_psx.ixx, checked on a TR1 .PSX file with an embedded VAB sound
+        /// bank). The sound bank comes first, then 13 textiles + 1024 CLUTs, the version, rooms with their own faces,
+        /// and tables like TR2/TR3's. Frames are not fixed-size: each one has a NumValues word.
+        /// Other TR1 PSX variants (May 1996, version 27, the 15-textile demo) are not supported.
+        /// </summary>
+        private void ParseTr1()
+        {
+            Game = GameKind.TR1;
+            _p = 0;
+
+            uint headerSize = U32();
+            int textileStart;
+            if (headerSize != 0 && Data.Length > 8 && Data[4] == 'p' && Data[5] == 'B' && Data[6] == 'A' && Data[7] == 'V')
+            {
+                // Embedded VAB: skip pBAV, version, id; the next field is the offset of the textiles minus 8.
+                _p = 16;
+                uint textileAddress = U32();
+                _p = 22;
+                ReadSoundsTr1Vab();
+                textileStart = (int)textileAddress + 8;
+            }
+            else
+            {
+                textileStart = 0;                                     // sounds are in external files
+            }
+
+            _p = textileStart;
+            TextileCount = 13;
+            TextileOffset = _p;
+            Skip(13L * TextileSize);
+            ClutCount = 1024;
+            ClutOffset = _p;
+            Skip(1024L * ClutSize);
+
+            if (I32() != 32) throw new InvalidDataException("not a TR1 PSX version 32 level");
+
+            int rooms = U16();
+            for (int r = 0; r < rooms; r++)
+            {
+                Skip(16);                                             // room info
+                uint words = U32();
+                Skip(2);
+                if (words > 0)
+                {
+                    Skip((short)U16() * 8L);                          // vertices
+                    short rects = (short)U16();
+                    CollectTr1RoomFaces(_p, rects, 10, 8);
+                    Skip(rects * 10L);                                // rectangles
+                    short tris = (short)U16();
+                    CollectTr1RoomFaces(_p, tris, 8, 6);
+                    Skip(tris * 8L);                                  // triangles
+                    Skip((short)U16() * 4L);                          // sprites
+                }
+                Skip(U16() * 32L);                                    // portals
+                int z = U16(), x = U16();
+                Skip(z * x * 8L);                                     // sectors
+                Skip(2);                                              // ambient intensity
+                Skip(U16() * 20L);                                    // lights
+                Skip(U16() * 20L);                                    // static meshes
+                Skip(4);                                              // alternate room, flags
+            }
+
+            Vector(2);                                                // floor data
+
+            var meshData = Vector(2);
+            MeshDataOffset = meshData.Offset;
+            var meshPointers = Vector(4);
+            MeshPointers = new uint[meshPointers.Count];
+            for (int i = 0; i < MeshPointers.Length; i++) MeshPointers[i] = BitConverter.ToUInt32(Data, meshPointers.Offset + i * 4);
+
+            (AnimCount, AnimOffset) = Vector(32);
+            (ChangeCount, ChangeOffset) = Vector(6);
+            (DispatchCount, DispatchOffset) = Vector(8);
+            (CommandCount, CommandOffset) = Vector(2);
+            (MeshTreeCount, MeshTreeOffset) = Vector(4);
+            (FrameCount, FrameOffset) = Vector(2);
+
+            var models = Vector(20);
+            for (int i = 0; i < models.Count; i++)
+            {
+                int p = models.Offset + i * 20;
+                Models.Add(new Model((int)BitConverter.ToUInt32(Data, p), BitConverter.ToUInt16(Data, p + 4), BitConverter.ToUInt16(Data, p + 6),
+                    (int)BitConverter.ToUInt32(Data, p + 8), (int)BitConverter.ToUInt32(Data, p + 12), BitConverter.ToUInt16(Data, p + 16)));
+            }
+
+            var statics = Vector(32);
+            for (int i = 0; i < statics.Count; i++)
+            {
+                int p = statics.Offset + i * 32;
+                var vis = new short[6];
+                var col = new short[6];
+                for (int k = 0; k < 6; k++)
+                {
+                    vis[k] = BitConverter.ToInt16(Data, p + 6 + k * 2);
+                    col[k] = BitConverter.ToInt16(Data, p + 18 + k * 2);
+                }
+                Statics.Add(new StaticMesh((int)BitConverter.ToUInt32(Data, p), BitConverter.ToUInt16(Data, p + 4), vis, col, BitConverter.ToUInt16(Data, p + 30)));
+            }
+
+            var objectTextures = Vector(16);
+            for (int i = 0; i < objectTextures.Count; i++)
+                ObjectTextures.Add(ReadTexture(objectTextures.Offset + i * 16));
+
+            var spriteTextures = Vector(16);
+            for (int i = 0; i < spriteTextures.Count; i++)
+            {
+                int p = spriteTextures.Offset + i * 16;
+                SpriteTextures.Add(new SpriteTexture(BitConverter.ToUInt16(Data, p + 8), BitConverter.ToUInt16(Data, p + 10), Data[p + 12], Data[p + 13], Data[p + 14], Data[p + 15]));
+            }
+
+            var spriteSequences = Vector(8);
+            for (int i = 0; i < spriteSequences.Count; i++)
+            {
+                int p = spriteSequences.Offset + i * 8;
+                SpriteSequences.Add(new SpriteSequence(BitConverter.ToInt32(Data, p), -BitConverter.ToInt16(Data, p + 4), BitConverter.ToInt16(Data, p + 6)));
+            }
+
+            // Room textures: the textures that room faces point to (in TR1 PSX only values above 255 are textured).
+            foreach (int index in _roomTextureIndices.OrderBy(i => i))
+                if (index >= 0 && index < ObjectTextures.Count)
+                    RoomTextures.Add(ObjectTextures[index]);
+        }
+
+        /// <summary>Room faces of TR1 PSX: collects the texture field of each face (at <paramref name="textureOffset"/> in a record).</summary>
+        private void CollectTr1RoomFaces(int start, int count, int recordSize, int textureOffset)
+        {
+            if (count <= 0 || start + (long)count * recordSize > Data.Length) return;
+            for (int k = 0; k < count; k++)
+                _roomTextureIndices.Add(BitConverter.ToUInt16(Data, start + k * recordSize + textureOffset) & 0x7FFF);
+        }
+
+        /// <summary>
+        /// Embedded VAB sound bank of TR1 PSX (sample count, 2062 + 512 bytes per sample of header, the sample sizes in
+        /// units of 8 bytes, then the samples one after the other). Positioned at the sample count.
+        /// </summary>
+        private void ReadSoundsTr1Vab()
+        {
+            int sampleCount = U16();
+            Skip(2062L + sampleCount * 512L);
+
+            int sizesPos = _p;
+            if (sizesPos + sampleCount * 2L > Data.Length) throw new InvalidDataException("sound bank does not fit in the file");
+
+            int dataPos = sizesPos + 510 + 4;
+            for (int s = 0; s < sampleCount; s++)
+            {
+                int length = BitConverter.ToUInt16(Data, sizesPos + s * 2) * 8;
+                if (length > 0 && dataPos + length <= Data.Length)
+                    Sounds.Add((dataPos, length));
+                dataPos += length;
+            }
+        }
+
+        /// <summary>
+        /// TR1 PSX mesh: centre (3 x int16), radius (int32), signed vertex count, vertices (8 bytes), then normals (8 bytes)
+        /// or lights (int16) for every vertex, rectangles (10 bytes) and triangles (8 bytes). A face texture of 256 or more
+        /// is an object texture; a lower value is a flat-colored face that takes its color from that object texture.
+        /// Flat-colored faces are stored with a negative texture index (-1 - index).
+        /// </summary>
+        private PsxMesh? ReadMeshTr1(int pointerIndex)
+        {
+            try
+            {
+                int m = MeshDataOffset + (int)MeshPointers[pointerIndex];
+                if (m < 0 || m + 12 > Data.Length) return null;
+
+                int signedCount = BitConverter.ToInt16(Data, m + 10);
+                int n = Math.Abs(signedCount);
+                if (n == 0) return null;
+
+                var mesh = new PsxMesh
+                {
+                    CenterX = BitConverter.ToInt16(Data, m),
+                    CenterY = BitConverter.ToInt16(Data, m + 2),
+                    CenterZ = BitConverter.ToInt16(Data, m + 4),
+                    Radius = (short)Math.Clamp(BitConverter.ToInt32(Data, m + 6), short.MinValue, short.MaxValue),
+                    PreLit = signedCount < 0
+                };
+
+                int q = m + 12;
+                if (q + n * 8 > Data.Length) return null;
+                mesh.Vertices = new (short, short, short, short)[n];
+                for (int i = 0; i < n; i++)
+                    mesh.Vertices[i] = (BitConverter.ToInt16(Data, q + i * 8), BitConverter.ToInt16(Data, q + i * 8 + 2), BitConverter.ToInt16(Data, q + i * 8 + 4), BitConverter.ToInt16(Data, q + i * 8 + 6));
+                q += n * 8;
+
+                if (signedCount > 0)
+                {
+                    mesh.Normals = new (short, short, short)[n];
+                    for (int i = 0; i < n; i++)
+                        mesh.Normals[i] = (BitConverter.ToInt16(Data, q + i * 8), BitConverter.ToInt16(Data, q + i * 8 + 2), BitConverter.ToInt16(Data, q + i * 8 + 4));
+                    q += n * 8;
+                }
+                else
+                {
+                    for (int i = 0; i < n; i++)
+                    {
+                        var v = mesh.Vertices[i];
+                        mesh.Vertices[i] = (v.X, v.Y, v.Z, BitConverter.ToInt16(Data, q + i * 2));
+                    }
+                    q += n * 2;
+                }
+
+                static int Encode(int texture) => texture >= 256 ? texture : -1 - texture;
+                bool Valid(int texture) => texture >= 256 ? texture < ObjectTextures.Count : texture < ObjectTextures.Count;
+
+                int rects = BitConverter.ToInt16(Data, q); q += 2;
+                for (int i = 0; i < rects; i++, q += 10)
+                {
+                    int p0 = BitConverter.ToUInt16(Data, q), p1 = BitConverter.ToUInt16(Data, q + 2), p2 = BitConverter.ToUInt16(Data, q + 4), p3 = BitConverter.ToUInt16(Data, q + 6);
+                    int tex = BitConverter.ToUInt16(Data, q + 8) & 0x7FFF;
+                    if (p0 >= n || p1 >= n || p2 >= n || p3 >= n || !Valid(tex)) return null;
+                    mesh.Quads.Add((p0, p1, p3, p2, Encode(tex)));     // outline p0 p1 p2 p3 = Z-order A B D C
+                }
+
+                int tris = BitConverter.ToInt16(Data, q); q += 2;
+                for (int i = 0; i < tris; i++, q += 8)
+                {
+                    int a = BitConverter.ToUInt16(Data, q), b = BitConverter.ToUInt16(Data, q + 2), c = BitConverter.ToUInt16(Data, q + 4);
+                    int tex = BitConverter.ToUInt16(Data, q + 6) & 0x7FFF;
+                    if (a >= n || b >= n || c >= n || !Valid(tex)) return null;
+                    mesh.Triangles.Add((a, b, c, Encode(tex)));
+                }
+
+                return mesh;
+            }
+            catch (ArgumentException)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>Color (5-5-5) of the first pixel of an object texture, used by the flat-colored faces of TR1.</summary>
+        public ushort ObjectTextureColor(int index)
+        {
+            if (index < 0 || index >= ObjectTextures.Count) return 0;
+            var t = ObjectTextures[index];
+            if (t.Tile >= TextileCount || t.Clut >= ClutCount) return 0;
+
+            int x = t.U[0], y = t.V[0];
+            int packed = Data[TextileOffset + t.Tile * TextileSize + y * 128 + x / 2];
+            int colorIndex = (x & 1) == 0 ? packed & 15 : packed >> 4;
+            return BitConverter.ToUInt16(Data, ClutOffset + t.Clut * ClutSize + colorIndex * 2);
+        }
+
         private ObjectTexture ReadTexture(int p)
         {
             var u = new[] { Data[p], Data[p + 4], Data[p + 8], Data[p + 12] };
@@ -388,6 +648,7 @@ namespace Lara_Extractor
         {
             if (pointerIndex < 0 || pointerIndex >= MeshPointers.Length) return null;
             if (Game == GameKind.TR2) return ReadMeshTr2(pointerIndex);
+            if (Game == GameKind.TR1) return ReadMeshTr1(pointerIndex);
 
             try
             {

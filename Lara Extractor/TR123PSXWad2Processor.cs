@@ -198,7 +198,8 @@ namespace Lara_Extractor
 
             // Key frames are stored every <rate> frames, plus one more to interpolate up to the last frame.
             int keyFrames = length / rate + 1 + (length % rate != 0 ? 1 : 0);
-            int frameWords = src.FrameSizeWords;
+            bool tr1 = _level.Game == PSXClassicLevel.GameKind.TR1;
+            int frameWords = tr1 ? 10 + 2 * numBones : src.FrameSizeWords;   // TR1: 9 header words, NumValues, 2 words per bone
             if (frameWords >= 9)
             {
                 for (int f = 0; f < keyFrames; f++)
@@ -209,7 +210,7 @@ namespace Lara_Extractor
                     while (want >= frameWords && (words = _level.ReadFrameWords(offset, want)) == null)
                         want -= 2;
                     if (words == null) break;
-                    anim.KeyFrames.Add(BuildKeyFrame(words, numBones));
+                    anim.KeyFrames.Add(BuildKeyFrame(words, numBones, tr1));
                 }
             }
             if (anim.KeyFrames.Count == 0)
@@ -265,7 +266,7 @@ namespace Lara_Extractor
             return anim;
         }
 
-        private static WadKeyFrame BuildKeyFrame(short[] words, int numBones)
+        private static WadKeyFrame BuildKeyFrame(short[] words, int numBones, bool tr1)
         {
             // Header: min X, max X, min Y, max Y, min Z, max Z, root X, root Y, root Z.
             var kf = new WadKeyFrame
@@ -274,15 +275,16 @@ namespace Lara_Extractor
                 Offset = new Vector3(words[6], -words[7], words[8])
             };
 
-            var data = new List<short>(words.Length - 9);
-            for (int i = 9; i < words.Length; i++) data.Add(words[i]);
+            int firstAngleWord = tr1 ? 10 : 9;                       // TR1 has a NumValues word after the header
+            var data = new List<short>(Math.Max(0, words.Length - firstAngleWord));
+            for (int i = firstAngleWord; i < words.Length; i++) data.Add(words[i]);
             while (data.Count < numBones * 2) data.Add(0);
 
             int index = 0;
             for (int b = 0; b < numBones; b++)
             {
                 int before = index;
-                kf.Angles.Add(WadKeyFrameRotation.FromTrAngle(ref index, data, false, false));   // TR2/TR3 packed angles
+                kf.Angles.Add(WadKeyFrameRotation.FromTrAngle(ref index, data, tr1, false));   // TR1: 2 words per angle; TR2/TR3: packed angles
                 if (index <= before) index = before + 1;
             }
 
@@ -297,6 +299,21 @@ namespace Lara_Extractor
                 return cached;
 
             var area = new TextureArea { DoubleSided = false };
+
+            if (texIndex < 0)
+            {
+                // Flat-colored face (TR1): a small texture filled with the color of the referenced object texture.
+                ushort color = _level.ObjectTextureColor(-1 - texIndex);
+                var solid = ImageC.CreateNew(2, 2);
+                solid.Fill(new ColorC((byte)(((color >> 0) & 31) * 255 / 31), (byte)(((color >> 5) & 31) * 255 / 31), (byte)(((color >> 10) & 31) * 255 / 31), 255));
+                area.Texture = new WadTexture(solid);
+                area.BlendMode = BlendMode.Normal;
+                area.TexCoord0 = new Vector2(0, 0); area.TexCoord1 = new Vector2(2, 0);
+                area.TexCoord2 = new Vector2(2, 2); area.TexCoord3 = isTriangle ? area.TexCoord2 : new Vector2(0, 2);
+                _areaCache[(texIndex, isTriangle)] = area;
+                return area;
+            }
+
             var t = _level.ObjectTextures[texIndex];
 
             if (!_level.TryRender(t, isTriangle, out int w, out int h, out byte[] bgra))
@@ -316,7 +333,7 @@ namespace Lara_Extractor
                     if (bgra[i] == 0) { transparent = true; break; }
 
                 // Draw mode 2 means additive blending (as used by trview), color 0x0000 is transparent.
-                int draw = (_level.Game == PSXClassicLevel.GameKind.TR2 ? t.Attribute : (isTriangle ? t.TriDraw : t.QuadDraw)) & 3;
+                int draw = _level.Game == PSXClassicLevel.GameKind.TR1 ? 0 : (_level.Game == PSXClassicLevel.GameKind.TR2 ? t.Attribute : (isTriangle ? t.TriDraw : t.QuadDraw)) & 3;
                 area.Texture = new WadTexture(ImageC.FromByteArray(bgra, w, h));
                 area.BlendMode = draw == 2 ? BlendMode.Additive : transparent ? BlendMode.AlphaTest : BlendMode.Normal;
 
