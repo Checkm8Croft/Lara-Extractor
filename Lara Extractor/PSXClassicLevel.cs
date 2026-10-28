@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 
 namespace Lara_Extractor
 {
@@ -23,7 +24,7 @@ namespace Lara_Extractor
         public const int ClutSize = 32;                 // 16 colors of 16 bits
 
         /// <summary>Texture record (16 bytes): u0 v0 clut | u1 v1 tile | u2 v2 triDraw quadDraw | u3 v3 attribute.</summary>
-        public readonly record struct ObjectTexture(byte[] U, byte[] V, ushort Clut, ushort Tile, byte TriDraw, byte QuadDraw);
+        public readonly record struct ObjectTexture(byte[] U, byte[] V, ushort Clut, ushort Tile, byte TriDraw, byte QuadDraw, ushort Attribute);
 
         public readonly record struct Model(int Id, int NumMeshes, int StartingMesh, int MeshTree, int FrameByteOffset, int Animation);
 
@@ -34,6 +35,9 @@ namespace Lara_Extractor
         public readonly record struct SpriteSequence(int Id, int Count, int Offset);
 
         public GameKind Game { get; private set; }
+
+        /// <summary>Sample rate of the sound data: 11025 Hz in TR3, 8000 Hz in TR2 (values used by trview).</summary>
+        public int SoundSampleRate => Game == GameKind.TR2 ? 8000 : 11025;
         public byte[] Data { get; }
 
         public List<(int Start, int Length)> Sounds { get; } = new();
@@ -97,21 +101,40 @@ namespace Lara_Extractor
 
         // ------------------------------------------------------------ parsing
 
-        public static bool IsSupported(byte[] data) => data.Length > 16 && BitConverter.ToInt32(data, 0) == unchecked((int)0xFFFFFFC8);
+        public static bool IsTr3(byte[] data) => data.Length > 16 && BitConverter.ToInt32(data, 0) == unchecked((int)0xFFFFFFC8);
+
+        /// <summary>TR2 PSX files start with the sound data and have the version (45) right after it.</summary>
+        private bool IsTr2()
+        {
+            try
+            {
+                _p = 0;
+                uint count = U32();
+                if (count > 10000) return false;
+                Skip(count * 4L);
+                uint size = U32();
+                Skip(size);
+                return I32() == 45;
+            }
+            catch (InvalidDataException)
+            {
+                return false;
+            }
+        }
 
         public static PSXClassicLevel? TryParse(byte[] data, out string error)
         {
             error = "";
-            if (!IsSupported(data))
-            {
-                error = "unsupported or unrecognized PSX level version";
-                return null;
-            }
-
             var level = new PSXClassicLevel(data);
             try
             {
-                level.ParseTr3();
+                if (IsTr3(data)) level.ParseTr3();
+                else if (level.IsTr2()) level.ParseTr2();
+                else
+                {
+                    error = "unsupported or unrecognized PSX level version (supported: TR2 version 45 and TR3)";
+                    return null;
+                }
                 return level;
             }
             catch (Exception ex) when (ex is InvalidDataException || ex is ArgumentException || ex is IndexOutOfRangeException)
@@ -126,23 +149,7 @@ namespace Lara_Extractor
             Game = GameKind.TR3;
             _p = 4;                                                   // version
 
-            // Sounds: offsets into the sound data, then the sound data itself (PlayStation ADPCM, 11025 Hz).
-            var (soundCount, soundOffsetsPos) = Vector(4);
-            if (soundCount > 0)
-            {
-                uint size = U32();
-                if (size > Data.Length - _p) throw new InvalidDataException("sound data does not fit in the file");
-                int soundDataPos = _p;
-                for (int i = 0; i < soundCount; i++)
-                {
-                    int start = (int)BitConverter.ToUInt32(Data, soundOffsetsPos + i * 4);
-                    int limit = i + 1 < soundCount ? (int)BitConverter.ToUInt32(Data, soundOffsetsPos + (i + 1) * 4) : (int)size;
-                    if (start < 0 || start >= size || limit > size || limit <= start) continue;
-                    int length = PSXAdpcm.FindSampleLength(Data, soundDataPos + start, soundDataPos + limit);
-                    if (length >= PSXAdpcm.BlockSize) Sounds.Add((soundDataPos + start, length));
-                }
-                Skip(size);
-            }
+            ReadSounds();
 
             // 13 blocks of unknown data, each possibly made of two parts.
             for (int i = 0; i < 13; i++)
@@ -171,10 +178,111 @@ namespace Lara_Extractor
                 Skip(2 + 2 + 1 + 1 + 1);                              // alternate room, flags, water scheme, reverb, filler
             }
 
+            ReadCommonTables(tr3: true);
+        }
+
+        /// <summary>
+        /// TR2 PSX, version 45 (layout from trview, Level_tr2_psx.ixx, checked on a TR2 .PSX file): the sound data comes
+        /// first, then the version, rooms, and tables like TR3's but without the outside map and the room textures.
+        /// Textures used by the rooms are taken from the room faces.
+        /// </summary>
+        private void ParseTr2()
+        {
+            Game = GameKind.TR2;
+            _p = 0;
+
+            ReadSounds();
+            I32();                                                    // version (45)
+
+            int rooms = U16();
+            for (int r = 0; r < rooms; r++)
+            {
+                Skip(16);                                             // room info
+                uint words = U32();
+                if (words > 0) CollectRoomTextures(_p, (int)words);
+                Skip(words * 2L);                                     // vertices/faces
+                Skip(U16() * 32L);                                    // portals
+                int z = U16(), x = U16();
+                Skip(z * x * 8L);                                     // sectors
+                Skip(6);                                              // ambient intensity 1 and 2, light mode
+                Skip(U16() * 24L);                                    // lights
+                Skip(U16() * 20L);                                    // static meshes
+                Skip(4);                                              // alternate room, flags
+            }
+
+            ReadCommonTables(tr3: false);
+
+            // Room textures of TR2: the object textures that room faces point to.
+            foreach (int index in _roomTextureIndices.OrderBy(i => i))
+                if (index < ObjectTextures.Count)
+                    RoomTextures.Add(ObjectTextures[index]);
+        }
+
+        private readonly HashSet<int> _roomTextureIndices = new();
+
+        /// <summary>Room data of TR2 PSX: vertices (uint32), rectangles (textures, then vertices), triangles (texture, vertices).</summary>
+        private void CollectRoomTextures(int start, int words)
+        {
+            try
+            {
+                int end = start + words * 2;
+                if (end > Data.Length) return;
+
+                int q = start;
+                int vertices = BitConverter.ToUInt16(Data, q);
+                q += 4 + vertices * 4;
+
+                int rectStart = q;
+                int rects = BitConverter.ToUInt16(Data, q);
+                q += 2;
+                for (int k = 0; k < rects && q + k * 2 + 2 <= end; k++)
+                    _roomTextureIndices.Add(BitConverter.ToUInt16(Data, q + k * 2) & 0x7FFF);
+                q += rects * 2;
+                if ((q - rectStart) % 4 != 0) q += 2;
+                q += rects * 8;
+
+                int triangles = BitConverter.ToInt16(Data, q);
+                q += 2;
+                if ((q - rectStart) % 4 != 0) q += 2;
+                for (int k = 0; k < triangles && q + k * 8 + 2 <= end; k++)
+                    _roomTextureIndices.Add(BitConverter.ToUInt16(Data, q + k * 8) & 0x7FFF);
+            }
+            catch (ArgumentException)
+            {
+            }
+        }
+
+        /// <summary>Sounds: offsets into the sound data, then the sound data itself (PlayStation ADPCM).</summary>
+        private void ReadSounds()
+        {
+            var (soundCount, soundOffsetsPos) = Vector(4);
+            if (soundCount > 0)
+            {
+                uint size = U32();
+                if (size > Data.Length - _p) throw new InvalidDataException("sound data does not fit in the file");
+                int soundDataPos = _p;
+                for (int i = 0; i < soundCount; i++)
+                {
+                    int start = (int)BitConverter.ToUInt32(Data, soundOffsetsPos + i * 4);
+                    int limit = i + 1 < soundCount ? (int)BitConverter.ToUInt32(Data, soundOffsetsPos + (i + 1) * 4) : (int)size;
+                    if (start < 0 || start >= size || limit > size || limit <= start) continue;
+                    int length = PSXAdpcm.FindSampleLength(Data, soundDataPos + start, soundDataPos + limit);
+                    if (length >= PSXAdpcm.BlockSize) Sounds.Add((soundDataPos + start, length));
+                }
+                Skip(size);
+            }
+        }
+
+        /// <summary>Tables that follow the rooms, shared by TR2 and TR3 PSX (TR3 has a few extra ones).</summary>
+        private void ReadCommonTables(bool tr3)
+        {
             Vector(2);                                                // floor data
-            Skip(729 * 2);                                            // room outside map
-            Vector(1);                                                // outside room table
-            Skip(I32() * 8L);                                         // bounding boxes
+            if (tr3)
+            {
+                Skip(729 * 2);                                        // room outside map
+                Vector(1);                                            // outside room table
+                Skip(I32() * 8L);                                     // bounding boxes
+            }
 
             var meshData = Vector(2);
             MeshDataOffset = meshData.Offset;
@@ -222,9 +330,10 @@ namespace Lara_Extractor
                 _p -= 2;                                              // the count was misaligned by 2 bytes
                 clutWords = U32();
             }
-            ClutCount = (int)clutWords * 2;
+            ClutCount = tr3 ? (int)clutWords * 2 : (int)clutWords;   // TR3 counts pairs of CLUTs
             ClutOffset = _p;
             Skip((long)ClutCount * ClutSize);
+            if (!tr3) Skip(4);
 
             var objectTextures = Vector(16);
             for (int i = 0; i < objectTextures.Count; i++)
@@ -243,6 +352,8 @@ namespace Lara_Extractor
                 int p = spriteSequences.Offset + i * 8;
                 SpriteSequences.Add(new SpriteSequence(BitConverter.ToInt32(Data, p), -BitConverter.ToInt16(Data, p + 4), BitConverter.ToInt16(Data, p + 6)));
             }
+
+            if (!tr3) return;
 
             Vector(16);                                               // cameras
             Vector(16);                                               // sound sources
@@ -267,7 +378,7 @@ namespace Lara_Extractor
         {
             var u = new[] { Data[p], Data[p + 4], Data[p + 8], Data[p + 12] };
             var v = new[] { Data[p + 1], Data[p + 5], Data[p + 9], Data[p + 13] };
-            return new ObjectTexture(u, v, BitConverter.ToUInt16(Data, p + 2), BitConverter.ToUInt16(Data, p + 6), Data[p + 10], Data[p + 11]);
+            return new ObjectTexture(u, v, BitConverter.ToUInt16(Data, p + 2), BitConverter.ToUInt16(Data, p + 6), Data[p + 10], Data[p + 11], BitConverter.ToUInt16(Data, p + 14));
         }
 
         // ------------------------------------------------------------ meshes
@@ -276,6 +387,7 @@ namespace Lara_Extractor
         public PsxMesh? ReadMesh(int pointerIndex)
         {
             if (pointerIndex < 0 || pointerIndex >= MeshPointers.Length) return null;
+            if (Game == GameKind.TR2) return ReadMeshTr2(pointerIndex);
 
             try
             {
@@ -364,6 +476,93 @@ namespace Lara_Extractor
             }
         }
 
+        /// <summary>
+        /// TR2 PSX mesh: centre (3 x int16), radius (int32), signed vertex count (positive = normals + reflective faces,
+        /// negative = pre-computed lights), vertices (8 bytes), then textured rectangles and triangles.
+        /// Quad vertices are stored as an outline; they are converted to the Z-order PsxMesh convention.
+        /// </summary>
+        private PsxMesh? ReadMeshTr2(int pointerIndex)
+        {
+            try
+            {
+                int m = MeshDataOffset + (int)MeshPointers[pointerIndex];
+                if (m < 0 || m + 12 > Data.Length) return null;
+
+                int signedCount = BitConverter.ToInt16(Data, m + 10);
+                int n = Math.Abs(signedCount);
+                if (n == 0) return null;
+
+                var mesh = new PsxMesh
+                {
+                    CenterX = BitConverter.ToInt16(Data, m),
+                    CenterY = BitConverter.ToInt16(Data, m + 2),
+                    CenterZ = BitConverter.ToInt16(Data, m + 4),
+                    Radius = (short)Math.Clamp(BitConverter.ToInt32(Data, m + 6), short.MinValue, short.MaxValue),
+                    PreLit = signedCount < 0
+                };
+
+                int q = m + 12;
+                if (q + n * 8 > Data.Length) return null;
+                mesh.Vertices = new (short, short, short, short)[n];
+                for (int i = 0; i < n; i++)
+                    mesh.Vertices[i] = (BitConverter.ToInt16(Data, q + i * 8), BitConverter.ToInt16(Data, q + i * 8 + 2), BitConverter.ToInt16(Data, q + i * 8 + 4), BitConverter.ToInt16(Data, q + i * 8 + 6));
+                q += n * 8;
+
+                bool AddQuad(int pos)
+                {
+                    int p0 = BitConverter.ToUInt16(Data, pos) >> 3, p1 = BitConverter.ToUInt16(Data, pos + 2) >> 3;
+                    int p2 = BitConverter.ToUInt16(Data, pos + 4) >> 3, p3 = BitConverter.ToUInt16(Data, pos + 6) >> 3;
+                    int tex = BitConverter.ToUInt16(Data, pos + 8) & 0x7FFF;
+                    if (p0 >= n || p1 >= n || p2 >= n || p3 >= n || tex >= ObjectTextures.Count) return false;
+                    mesh.Quads.Add((p0, p1, p3, p2, tex));            // outline p0 p1 p2 p3 = Z-order A B D C
+                    return true;
+                }
+
+                bool AddTriangle(int pos)
+                {
+                    int a = BitConverter.ToUInt16(Data, pos) >> 3, b = BitConverter.ToUInt16(Data, pos + 2) >> 3, c = BitConverter.ToUInt16(Data, pos + 4) >> 3;
+                    int tex = BitConverter.ToUInt16(Data, pos + 6) & 0x7FFF;
+                    if (a >= n || b >= n || c >= n || tex >= ObjectTextures.Count) return false;
+                    mesh.Triangles.Add((a, b, c, tex));
+                    return true;
+                }
+
+                if (signedCount > 0)
+                {
+                    mesh.Normals = new (short, short, short)[n];
+                    for (int i = 0; i < n; i++)
+                        mesh.Normals[i] = (BitConverter.ToInt16(Data, q + i * 8), BitConverter.ToInt16(Data, q + i * 8 + 2), BitConverter.ToInt16(Data, q + i * 8 + 4));
+                    q += n * 8;
+
+                    int reflectiveRects = BitConverter.ToInt16(Data, q); q += 2;
+                    for (int i = 0; i < reflectiveRects; i++, q += 12) if (!AddQuad(q)) return null;
+                    int reflectiveTris = BitConverter.ToInt16(Data, q); q += 2;
+                    for (int i = 0; i < reflectiveTris; i++, q += 10) if (!AddTriangle(q)) return null;
+                }
+                else
+                {
+                    // Pre-computed lights, one int16 per vertex (stored in W, read as 5-5-5 color).
+                    for (int i = 0; i < n; i++)
+                    {
+                        var v = mesh.Vertices[i];
+                        mesh.Vertices[i] = (v.X, v.Y, v.Z, BitConverter.ToInt16(Data, q + i * 2));
+                    }
+                    q += n * 2;
+                }
+
+                int rects = BitConverter.ToInt16(Data, q); q += 2;
+                for (int i = 0; i < rects; i++, q += 10) if (!AddQuad(q)) return null;
+                int tris = BitConverter.ToInt16(Data, q); q += 2;
+                for (int i = 0; i < tris; i++, q += 8) if (!AddTriangle(q)) return null;
+
+                return mesh;
+            }
+            catch (ArgumentException)
+            {
+                return null;
+            }
+        }
+
         // ------------------------------------------------------------ animations
 
         public int ReadMeshTreeInt(int index)
@@ -419,6 +618,10 @@ namespace Lara_Extractor
         }
 
         // ------------------------------------------------------------ textures
+
+        /// <summary>A triangle leaves its fourth corner at (0,0); treat it as a triangle unless that is a real corner.</summary>
+        public static bool LooksLikeTriangle(ObjectTexture t)
+            => t.U[3] == 0 && t.V[3] == 0 && Math.Min(Math.Min(t.U[0], t.U[1]), t.U[2]) > 0;
 
         /// <summary>Bounding rectangle (inclusive, inside the 256x256 tile) covered by the texture corners.</summary>
         public static (int U0, int V0, int U1, int V1) GetRect(ObjectTexture t, bool triangle)

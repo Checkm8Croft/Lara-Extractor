@@ -43,7 +43,8 @@ namespace Lara_Extractor
                 for (int i = 0; i < level.RoomTextures.Count; i++)
                 {
                     // Room faces can be triangles or quads: render the full rectangle of the four corners.
-                    if (!level.TryRender(level.RoomTextures[i], false, out int w, out int h, out byte[] bgra))
+                    var roomTexture = level.RoomTextures[i];
+                    if (!level.TryRender(roomTexture, PSXClassicLevel.LooksLikeTriangle(roomTexture), out int w, out int h, out byte[] bgra))
                         continue;
                     if (!seen.Add(Hash(w, h, bgra)))
                         continue;
@@ -71,10 +72,10 @@ namespace Lara_Extractor
                     if (silentFirst) { start += PSXAdpcm.BlockSize; length -= PSXAdpcm.BlockSize; }
                     if (length < PSXAdpcm.BlockSize) continue;
 
-                    PSXAdpcm.WriteWav(Path.Combine(dir, $"Sound_{i:D3}.wav"), PSXAdpcm.Decode(level.Data, start, length), PSXAdpcm.DefaultSampleRate);
+                    PSXAdpcm.WriteWav(Path.Combine(dir, $"Sound_{i:D3}.wav"), PSXAdpcm.Decode(level.Data, start, length), level.SoundSampleRate);
                     saved++;
                 }
-                log($"[PSX Audio] {saved} sound(s) saved as 11025 Hz mono WAV.");
+                log($"[PSX Audio] {saved} sound(s) saved as {level.SoundSampleRate} Hz mono WAV.");
             }
             progress(100);
         }

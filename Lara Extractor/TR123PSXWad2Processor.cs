@@ -316,7 +316,7 @@ namespace Lara_Extractor
                     if (bgra[i] == 0) { transparent = true; break; }
 
                 // Draw mode 2 means additive blending (as used by trview), color 0x0000 is transparent.
-                int draw = (isTriangle ? t.TriDraw : t.QuadDraw) & 3;
+                int draw = (_level.Game == PSXClassicLevel.GameKind.TR2 ? t.Attribute : (isTriangle ? t.TriDraw : t.QuadDraw)) & 3;
                 area.Texture = new WadTexture(ImageC.FromByteArray(bgra, w, h));
                 area.BlendMode = draw == 2 ? BlendMode.Additive : transparent ? BlendMode.AlphaTest : BlendMode.Normal;
 
