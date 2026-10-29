@@ -6,7 +6,8 @@ Lara Extractor is a tool for extract resources from Tomb Raider 1-5 (PC Only), T
 - .tr4
 - .trc
 - .ten
-- .obj
+- .obj (TR4/5 PSX)
+- .psx (TR1-3 PSX)
 
 ## File Extraction
 
@@ -41,3 +42,5 @@ I'm working [In this repo](https://github.com/Checkm8Croft/PRJ2-Extractor) and i
 
 - [Tomb Raider Chronicles](https://www.tombraiderchronicles.com/) for the Lara model used in the icon
 - [Tomb Engine team](https://github.com/TombEngine) for TombLib and TombEngine code used for the program
+- [TOMB5](https://github.com/TOMB5/TOMB5) helped me with TR4/5 PSX extraction
+- [trview](https://github.com/chreden/trview) helped me with TR1-3 PSX extraction

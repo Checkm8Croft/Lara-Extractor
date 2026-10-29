@@ -18,8 +18,69 @@ namespace Lara_Extractor
             return name.StartsWith("GAMEWAD", StringComparison.OrdinalIgnoreCase) || ext == ".obj";
         }
 
-        public static void Extract(string path, string outputDir, bool extractTextures, bool extractAudio, Action<string> log, Action<double> progress)
+        /// <summary>A single PlayStation level of TR1-3 (.PSX).</summary>
+        public static bool IsPsxClassicLevelName(string path)
+            => string.Equals(Path.GetExtension(path), ".psx", StringComparison.OrdinalIgnoreCase);
+
+        public static void ExtractClassic(string path, string outputDir, bool extractTextures, bool extractAudio, Action<string> log, Action<double> progress)
         {
+            var level = PSXClassicLevel.TryParse(File.ReadAllBytes(path), out string error);
+            if (level == null)
+            {
+                log($"[PSX Error] Cannot read the level: {error}.");
+                return;
+            }
+
+            log($"[PSX] {level.Game} level: {level.Models.Count} models, {level.Statics.Count} statics, {level.RoomTextures.Count} room textures, {level.Sounds.Count} sounds.");
+
+            if (extractTextures)
+            {
+                string dir = Path.Combine(outputDir, "Textures");
+                Directory.CreateDirectory(dir);
+
+                var seen = new HashSet<string>();
+                int saved = 0;
+                for (int i = 0; i < level.RoomTextures.Count; i++)
+                {
+                    // Room faces can be triangles or quads: render the full rectangle of the four corners.
+                    var roomTexture = level.RoomTextures[i];
+                    if (!level.TryRender(roomTexture, PSXClassicLevel.LooksLikeTriangle(roomTexture), out int w, out int h, out byte[] bgra))
+                        continue;
+                    if (!seen.Add(Hash(w, h, bgra)))
+                        continue;
+
+                    WriteTga(Path.Combine(dir, $"Room_{i:D4}.tga"), bgra, w, h);
+                    saved++;
+                }
+                log($"[PSX Tex] {saved} unique room texture(s) saved from {level.RoomTextures.Count} entries.");
+            }
+            progress(50);
+
+            if (extractAudio)
+            {
+                string dir = Path.Combine(outputDir, "Sounds");
+                Directory.CreateDirectory(dir);
+
+                int saved = 0;
+                for (int i = 0; i < level.Sounds.Count; i++)
+                {
+                    var (start, length) = level.Sounds[i];
+                    // The first block of every sample is silence: skip it.
+                    bool silentFirst = true;
+                    for (int k = 0; k < PSXAdpcm.BlockSize && silentFirst; k++)
+                        if (level.Data[start + k] != 0) silentFirst = false;
+                    if (silentFirst) { start += PSXAdpcm.BlockSize; length -= PSXAdpcm.BlockSize; }
+                    if (length < PSXAdpcm.BlockSize) continue;
+
+                    PSXAdpcm.WriteWav(Path.Combine(dir, $"Sound_{i:D3}.wav"), PSXAdpcm.Decode(level.Data, start, length), level.SoundSampleRate);
+                    saved++;
+                }
+                log($"[PSX Audio] {saved} sound(s) saved as {level.SoundSampleRate} Hz mono WAV.");
+            }
+            progress(100);
+        }
+
+        public static void Extract(string path, string outputDir, bool extractTextures, bool extractAudio, Action<string> log, Action<double> progress)        {
             var gamewad = PSXGamewad.TryOpen(path);
             if (gamewad == null)
             {

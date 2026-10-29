@@ -20,7 +20,7 @@ namespace Lara_Extractor
         {
             OpenFileDialog openFileDialog = new OpenFileDialog
             {
-                Filter = "Tomb Raider Levels (*.phd;*.tr2;*.tr4;*.trc;*.ten;*.obj)|*.phd;*.tr2;*.tr4;*.trc;*.ten;*.obj|All files (*.*)|*.*",
+                Filter = "Tomb Raider Levels (*.phd;*.tr2;*.tr4;*.trc;*.ten;*.obj;*.psx)|*.phd;*.tr2;*.tr4;*.trc;*.ten;*.obj;*.psx|All files (*.*)|*.*",
                 Title = "Select a Tomb Raider Level"
             };
 

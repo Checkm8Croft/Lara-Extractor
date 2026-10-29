@@ -36,6 +36,13 @@ namespace Lara_Extractor
             }
             Directory.CreateDirectory(_outputDir);
 
+            if (PSXAssetExtractor.IsPsxClassicLevelName(_filePath))
+            {
+                _logger("[Engine] PlayStation level (TR1-3) detected.");
+                PSXAssetExtractor.ExtractClassic(_filePath, _outputDir, _extractTextures, _extractAudio, _logger, _progressReporter);
+                return;
+            }
+
             if (PSXAssetExtractor.IsPsxContainerName(_filePath))
             {
                 _logger("[Engine] PlayStation GAMEWAD container detected.");

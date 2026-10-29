@@ -35,6 +35,13 @@ namespace Lara_Extractor
                 return;
             }
 
+            if (PSXAssetExtractor.IsPsxClassicLevelName(_inputLevelPath))
+            {
+                _logger("[Wad2] PlayStation level (TR1-3) detected. Delegating to TR123PSXWad2Processor...");
+                new TR123PSXWad2Processor(_inputLevelPath, _outputWad2Path, _logger).ExtractWad2();
+                return;
+            }
+
             if (PSXAssetExtractor.IsPsxContainerName(_inputLevelPath))
             {
                 _logger("[Wad2] PlayStation GAMEWAD container detected. Delegating to TR4PSXWad2Processor...");
