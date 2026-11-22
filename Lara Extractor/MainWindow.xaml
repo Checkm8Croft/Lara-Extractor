@@ -5,59 +5,87 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Lara_Extractor"
         mc:Ignorable="d"
-        Title="Lara Extractor" Height="520" Width="800" MinHeight="460" MinWidth="600">
-    <Grid Margin="20">
+        Title="Lara Extractor" Height="540" Width="800" MinHeight="480" MinWidth="640"
+        Background="{DynamicResource WindowBackground}"
+        FontSize="13" UseLayoutRounding="True" SnapsToDevicePixels="True">
+    <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <TextBlock Text="Lara Extractor (TR1 - TR5, TRNG and TEN Asset Unpacker)" 
-                   FontSize="20" FontWeight="Bold" Foreground="#2C3E50" Margin="0,0,0,15"/>
+        <!-- ============ header ============ -->
+        <Border Grid.Row="0" Background="{DynamicResource SurfaceBackground}" BorderBrush="{DynamicResource CardBorder}" BorderThickness="0,0,0,1" Padding="20,12">
+            <Grid>
+                <StackPanel>
+                    <TextBlock Text="Lara Extractor" FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}"/>
+                    <TextBlock Text="TR1 - TR5, TRNG and TEN asset unpacker" Style="{StaticResource Caption}" Margin="0,2,0,0"/>
+                </StackPanel>
+                <Border HorizontalAlignment="Right" VerticalAlignment="Center"
+                        Background="{DynamicResource HoverFill}" BorderBrush="{DynamicResource CardBorder}" BorderThickness="1" CornerRadius="9" Padding="2"
+                        ToolTip="Colour theme">
+                    <StackPanel Orientation="Horizontal">
+                        <RadioButton x:Name="RbThemeSystem" Content="System" GroupName="Theme" Style="{StaticResource ThemeChoice}"
+                                     Tag="{x:Static local:ThemeChoice.System}" Checked="Theme_Checked" ToolTip="Follow the Windows light / dark setting"/>
+                        <RadioButton x:Name="RbThemeLight" Content="Light" GroupName="Theme" Style="{StaticResource ThemeChoice}"
+                                     Tag="{x:Static local:ThemeChoice.Light}" Checked="Theme_Checked"/>
+                        <RadioButton x:Name="RbThemeDark" Content="Dark" GroupName="Theme" Style="{StaticResource ThemeChoice}"
+                                     Tag="{x:Static local:ThemeChoice.Dark}" Checked="Theme_Checked"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Border>
 
-        <Grid Grid.Row="1" Margin="0,0,0,10">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <TextBox x:Name="TxtFilePath" IsReadOnly="True" Height="30" VerticalContentAlignment="Center" Padding="5" Background="White"/>
-            <Button Grid.Column="1" Content="Browse Level..." Width="130" Margin="10,0,0,0" Click="BtnBrowse_Click" Background="#34495E" Foreground="White" FontWeight="Bold"/>
-        </Grid>
+        <!-- ============ content ============ -->
+        <Grid Grid.Row="1" Margin="20">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
 
-        <Grid Grid.Row="2" Margin="0,0,0,10">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <TextBox x:Name="TxtOutputDir" Height="30" VerticalContentAlignment="Center" Padding="5" Background="White"/>
-            <Button Grid.Column="1" Content="Browse Output..." Width="130" Margin="10,0,0,0" Click="BtnBrowseOutput_Click" Background="#34495E" Foreground="White" FontWeight="Bold"/>
-        </Grid>
+            <Grid Grid.Row="0" Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="TxtFilePath" IsReadOnly="True" Style="{StaticResource FieldBox}"/>
+                <Button Grid.Column="1" Content="Browse Level..." Width="140" Margin="10,0,0,0" Click="BtnBrowse_Click" Style="{StaticResource SecondaryButton}"/>
+            </Grid>
 
-        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,0,0,15" VerticalAlignment="Center">
-            <TextBlock Text="Extract:" FontWeight="Bold" Foreground="#2C3E50" VerticalAlignment="Center" Margin="0,0,15,0"/>
-            <CheckBox x:Name="ChkExtractTextures" Content="Textures" IsChecked="True" FontWeight="SemiBold" Foreground="#2C3E50" Margin="0,0,20,0" VerticalAlignment="Center"/>
-            <CheckBox x:Name="ChkExtractAudio" Content="Audio (SFX)" IsChecked="True" FontWeight="SemiBold" Foreground="#2C3E50" Margin="0,0,20,0" VerticalAlignment="Center"/>
-            <CheckBox x:Name="ChkExtractWad2" Content="3D Assets (Wad2)" IsChecked="True" FontWeight="SemiBold" Foreground="#2C3E50" Margin="0,0,20,0" VerticalAlignment="Center"/>
-        </StackPanel>
+            <Grid Grid.Row="1" Margin="0,0,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="TxtOutputDir" Style="{StaticResource FieldBox}"/>
+                <Button Grid.Column="1" Content="Browse Output..." Width="140" Margin="10,0,0,0" Click="BtnBrowseOutput_Click" Style="{StaticResource SecondaryButton}"/>
+            </Grid>
 
-        <TextBox x:Name="TxtLog" Grid.Row="4" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
-                 VerticalScrollBarVisibility="Auto" Background="#1E1E1E" Foreground="#00FF00" 
-                 FontFamily="Consolas" Padding="10"/>
+            <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,14" VerticalAlignment="Center">
+                <TextBlock Text="Extract:" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center" Margin="0,0,15,0"/>
+                <CheckBox x:Name="ChkExtractTextures" Content="Textures" IsChecked="True" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" Margin="0,0,20,0" VerticalAlignment="Center"/>
+                <CheckBox x:Name="ChkExtractAudio" Content="Audio (SFX)" IsChecked="True" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" Margin="0,0,20,0" VerticalAlignment="Center"/>
+                <CheckBox x:Name="ChkExtractWad2" Content="3D Assets (Wad2)" IsChecked="True" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" Margin="0,0,20,0" VerticalAlignment="Center"/>
+            </StackPanel>
 
-        <Grid Grid.Row="5" Margin="0,15,0,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <ProgressBar x:Name="ExtractionProgress" Height="20" Minimum="0" Maximum="100"/>
-            <CheckBox x:Name="ChkSaveLog" Grid.Column="1" Content="Save Log to File" 
-                      Margin="15,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="#2C3E50" IsChecked="False"/>
-            <Button x:Name="BtnExtract" Grid.Column="2" Content="Extract Assets" Width="130" Margin="15,0,0,0" Click="BtnExtract_Click" Background="#27AE60" Foreground="White" FontWeight="Bold"/>
+            <TextBox x:Name="TxtLog" Grid.Row="3" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                     VerticalScrollBarVisibility="Auto" Background="{DynamicResource LogBackground}" Foreground="{DynamicResource LogText}"
+                     BorderBrush="{DynamicResource CardBorder}" FontFamily="Consolas" Padding="10"/>
+
+            <Grid Grid.Row="4" Margin="0,15,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <ProgressBar x:Name="ExtractionProgress" Style="{StaticResource SlimProgress}" Minimum="0" Maximum="100" VerticalAlignment="Center"/>
+                <CheckBox x:Name="ChkSaveLog" Grid.Column="1" Content="Save Log to File"
+                          Margin="15,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" IsChecked="False"/>
+                <Button x:Name="BtnExtract" Grid.Column="2" Content="Extract Assets" Width="140" Margin="15,0,0,0" Click="BtnExtract_Click" Style="{StaticResource PrimaryButton}"/>
+            </Grid>
         </Grid>
     </Grid>
 </Window>
