@@ -9,6 +9,7 @@
         <UseWPF>true</UseWPF>
         <PlatformTarget>x64</PlatformTarget>
         <ApplicationIcon>Lara Extractor.ico</ApplicationIcon>
+        <NoWarn>$(NoWarn);WPF0001</NoWarn>
     </PropertyGroup>
 
     <ItemGroup>

@@ -4,6 +4,7 @@ using System.IO;
 using System.Media;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Threading;
 
 namespace Lara_Extractor
@@ -13,7 +14,19 @@ namespace Lara_Extractor
         public MainWindow()
         {
             InitializeComponent();
+
+            // Show the saved choice in the theme switch (ThemeService.Initialize already applied it).
+            RbThemeSystem.IsChecked = ThemeService.Choice == ThemeChoice.System;
+            RbThemeLight.IsChecked = ThemeService.Choice == ThemeChoice.Light;
+            RbThemeDark.IsChecked = ThemeService.Choice == ThemeChoice.Dark;
+
             Log("System initialized. Ready to unpack Tomb Raider levels.");
+        }
+
+        private void Theme_Checked(object sender, RoutedEventArgs e)
+        {
+            if (sender is RadioButton { Tag: ThemeChoice choice })
+                ThemeService.SetChoice(choice);
         }
 
         private void BtnBrowse_Click(object sender, RoutedEventArgs e)
